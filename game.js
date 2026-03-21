@@ -18,6 +18,7 @@ const GameState = {
 let state = GameState.START;
 let score = 0;
 let lives = 3;
+let ballLaunched = false;
 
 // --- High Scores ---
 const HIGH_SCORE_KEY = 'breakout_high_scores';
@@ -113,7 +114,9 @@ document.addEventListener('keydown', (e) => {
 
     if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
-        if (state === GameState.START) {
+        if (state === GameState.PLAYING && !ballLaunched) {
+            launchBall();
+        } else if (state === GameState.START) {
             startGame();
         } else if (state === GameState.GAME_OVER || state === GameState.WIN) {
             if (score > 0 && isHighScore(score)) {
@@ -146,6 +149,13 @@ document.addEventListener('keydown', (e) => {
 
 document.addEventListener('keyup', (e) => {
     keys[e.key] = false;
+});
+
+// --- Click to Launch ---
+canvas.addEventListener('click', () => {
+    if (state === GameState.PLAYING && !ballLaunched) {
+        launchBall();
+    }
 });
 
 // --- Mouse Control ---
@@ -181,10 +191,19 @@ function initPositions() {
     paddle.x = (canvas.width - paddle.width) / 2;
     paddle.y = canvas.height - 40;
 
-    ball.x = canvas.width / 2;
+    ballLaunched = false;
+    ball.x = paddle.x + paddle.width / 2;
     ball.y = paddle.y - ball.radius - 2;
-    ball.dx = ball.speed * (Math.random() > 0.5 ? 1 : -1);
-    ball.dy = -ball.speed;
+    ball.dx = 0;
+    ball.dy = 0;
+}
+
+function launchBall() {
+    if (ballLaunched) return;
+    ballLaunched = true;
+    const angle = (Math.random() - 0.5) * Math.PI * 0.5; // random angle ±45°
+    ball.dx = ball.speed * Math.sin(angle);
+    ball.dy = -ball.speed * Math.cos(angle);
 }
 
 function createBricks() {
@@ -226,6 +245,13 @@ function update() {
         paddle.x = Math.min(canvas.width - paddle.width, paddle.x + paddle.speed);
     }
 
+    // Ball follows paddle before launch
+    if (!ballLaunched) {
+        ball.x = paddle.x + paddle.width / 2;
+        ball.y = paddle.y - ball.radius - 2;
+        return;
+    }
+
     // Ball movement
     ball.x += ball.dx;
     ball.y += ball.dy;
@@ -251,9 +277,9 @@ function update() {
         // Adjust angle based on where ball hits paddle
         const hitPos = (ball.x - paddle.x) / paddle.width; // 0 to 1
         const angle = (hitPos - 0.5) * Math.PI * 0.7; // -63° to +63°
-        const speed = Math.sqrt(ball.dx * ball.dx + ball.dy * ball.dy);
-        ball.dx = speed * Math.sin(angle);
-        ball.dy = -speed * Math.cos(angle);
+        // Normalize speed to prevent acceleration
+        ball.dx = ball.speed * Math.sin(angle);
+        ball.dy = -ball.speed * Math.cos(angle);
     }
 
     // Ball falls below paddle
@@ -323,6 +349,14 @@ function drawHUD() {
     ctx.fillText(`Score: ${score}`, 15, 30);
     ctx.textAlign = 'right';
     ctx.fillText(`Lives: ${lives}`, canvas.width - 15, 30);
+
+    // Launch hint
+    if (!ballLaunched && Math.floor(Date.now() / 600) % 2 === 0) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#ffea00';
+        ctx.font = '18px monospace';
+        ctx.fillText('Press Space or Click to Launch', canvas.width / 2, canvas.height / 2);
+    }
 }
 
 // --- Screen Rendering ---
