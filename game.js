@@ -148,6 +148,34 @@ document.addEventListener('keyup', (e) => {
     keys[e.key] = false;
 });
 
+// --- Mouse Control ---
+canvas.addEventListener('mousemove', (e) => {
+    if (state !== GameState.PLAYING) return;
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const mouseX = (e.clientX - rect.left) * scaleX;
+    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, mouseX - paddle.width / 2));
+});
+
+// --- Touch Control ---
+canvas.addEventListener('touchmove', (e) => {
+    if (state !== GameState.PLAYING) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const touchX = (e.touches[0].clientX - rect.left) * scaleX;
+    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, touchX - paddle.width / 2));
+}, { passive: false });
+
+canvas.addEventListener('touchstart', (e) => {
+    if (state !== GameState.PLAYING) return;
+    e.preventDefault();
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const touchX = (e.touches[0].clientX - rect.left) * scaleX;
+    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, touchX - paddle.width / 2));
+}, { passive: false });
+
 // --- Initialization ---
 function initPositions() {
     paddle.x = (canvas.width - paddle.width) / 2;
