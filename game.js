@@ -11,11 +11,49 @@ const GameState = {
     PLAYING: 'playing',
     GAME_OVER: 'gameOver',
     WIN: 'win',
+    HIGH_SCORE_ENTRY: 'highScoreEntry',
+    HIGH_SCORES: 'highScores',
 };
 
 let state = GameState.START;
 let score = 0;
 let lives = 3;
+
+// --- High Scores ---
+const HIGH_SCORE_KEY = 'breakout_high_scores';
+const MAX_HIGH_SCORES = 10;
+let initialsBuffer = '';
+let highScoreJustEntered = false;
+
+function loadHighScores() {
+    try {
+        const data = localStorage.getItem(HIGH_SCORE_KEY);
+        return data ? JSON.parse(data) : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveHighScores(scores) {
+    localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(scores));
+}
+
+function isHighScore(newScore) {
+    const scores = loadHighScores();
+    return scores.length < MAX_HIGH_SCORES || newScore > scores[scores.length - 1].score;
+}
+
+function addHighScore(initials, newScore) {
+    const scores = loadHighScores();
+    scores.push({
+        initials: initials.toUpperCase(),
+        score: newScore,
+        date: new Date().toISOString().slice(0, 10),
+    });
+    scores.sort((a, b) => b.score - a.score);
+    if (scores.length > MAX_HIGH_SCORES) scores.length = MAX_HIGH_SCORES;
+    saveHighScores(scores);
+}
 
 // --- Paddle ---
 const paddle = {
@@ -58,13 +96,50 @@ const keys = {};
 document.addEventListener('keydown', (e) => {
     keys[e.key] = true;
 
+    if (state === GameState.HIGH_SCORE_ENTRY) {
+        e.preventDefault();
+        if (e.key === 'Backspace') {
+            initialsBuffer = initialsBuffer.slice(0, -1);
+        } else if (e.key === 'Enter' && initialsBuffer.length > 0) {
+            addHighScore(initialsBuffer, score);
+            initialsBuffer = '';
+            highScoreJustEntered = true;
+            state = GameState.HIGH_SCORES;
+        } else if (/^[a-zA-Z]$/.test(e.key) && initialsBuffer.length < 3) {
+            initialsBuffer += e.key.toUpperCase();
+        }
+        return;
+    }
+
     if (e.key === ' ' || e.code === 'Space') {
         e.preventDefault();
         if (state === GameState.START) {
             startGame();
         } else if (state === GameState.GAME_OVER || state === GameState.WIN) {
+            if (score > 0 && isHighScore(score)) {
+                initialsBuffer = '';
+                highScoreJustEntered = false;
+                state = GameState.HIGH_SCORE_ENTRY;
+            } else {
+                resetGame();
+                startGame();
+            }
+        } else if (state === GameState.HIGH_SCORES) {
             resetGame();
             startGame();
+        }
+    }
+
+    if (e.key === 'h' || e.key === 'H') {
+        if (state === GameState.START) {
+            highScoreJustEntered = false;
+            state = GameState.HIGH_SCORES;
+        }
+    }
+
+    if (e.key === 'Escape') {
+        if (state === GameState.HIGH_SCORES) {
+            state = GameState.START;
         }
     }
 });
@@ -262,7 +337,8 @@ function drawStartScreen() {
     // Controls hint
     ctx.fillStyle = '#555';
     ctx.font = '14px monospace';
-    ctx.fillText('← → or A/D to move', canvas.width / 2, canvas.height / 2 + 140);
+    ctx.fillText('← → or A/D to move', canvas.width / 2, canvas.height / 2 + 130);
+    ctx.fillText('Press H for High Scores', canvas.width / 2, canvas.height / 2 + 155);
 
     ctx.restore();
 }
@@ -297,7 +373,8 @@ function drawGameOverScreen() {
     if (Math.floor(Date.now() / 600) % 2 === 0) {
         ctx.fillStyle = '#ffea00';
         ctx.font = '22px monospace';
-        ctx.fillText('Press Space to Restart', canvas.width / 2, canvas.height / 2 + 80);
+        const prompt = score > 0 && isHighScore(score) ? 'Press Space to Enter High Score' : 'Press Space to Restart';
+        ctx.fillText(prompt, canvas.width / 2, canvas.height / 2 + 80);
     }
 
     ctx.restore();
@@ -333,7 +410,150 @@ function drawWinScreen() {
     if (Math.floor(Date.now() / 600) % 2 === 0) {
         ctx.fillStyle = '#ffea00';
         ctx.font = '22px monospace';
-        ctx.fillText('Press Space to Play Again', canvas.width / 2, canvas.height / 2 + 80);
+        const prompt = score > 0 && isHighScore(score) ? 'Press Space to Enter High Score' : 'Press Space to Play Again';
+        ctx.fillText(prompt, canvas.width / 2, canvas.height / 2 + 80);
+    }
+
+    ctx.restore();
+}
+
+function drawHighScoreEntryScreen() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Title
+    ctx.shadowColor = '#ffea00';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#ffea00';
+    ctx.font = 'bold 48px monospace';
+    ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 - 100);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 48px monospace';
+    ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 - 100);
+
+    // Score
+    ctx.fillStyle = '#aaa';
+    ctx.font = '24px monospace';
+    ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 - 40);
+
+    // Prompt
+    ctx.fillStyle = '#888';
+    ctx.font = '20px monospace';
+    ctx.fillText('Enter your initials:', canvas.width / 2, canvas.height / 2 + 10);
+
+    // Initials display (3 boxes)
+    const boxSize = 50;
+    const boxGap = 15;
+    const totalWidth = 3 * boxSize + 2 * boxGap;
+    const startX = (canvas.width - totalWidth) / 2;
+    const boxY = canvas.height / 2 + 40;
+
+    for (let i = 0; i < 3; i++) {
+        const bx = startX + i * (boxSize + boxGap);
+        // Box
+        ctx.strokeStyle = i === initialsBuffer.length ? '#00e5ff' : '#444';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(bx, boxY, boxSize, boxSize);
+
+        // Letter
+        if (i < initialsBuffer.length) {
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 32px monospace';
+            ctx.fillText(initialsBuffer[i], bx + boxSize / 2, boxY + boxSize / 2);
+        } else if (i === initialsBuffer.length) {
+            // Blinking cursor
+            if (Math.floor(Date.now() / 400) % 2 === 0) {
+                ctx.fillStyle = '#00e5ff';
+                ctx.font = 'bold 32px monospace';
+                ctx.fillText('_', bx + boxSize / 2, boxY + boxSize / 2);
+            }
+        }
+    }
+
+    // Hint
+    ctx.fillStyle = '#555';
+    ctx.font = '14px monospace';
+    ctx.fillText('Press Enter to confirm', canvas.width / 2, boxY + boxSize + 35);
+
+    ctx.restore();
+}
+
+function drawHighScoresScreen() {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    // Title
+    ctx.shadowColor = '#2979ff';
+    ctx.shadowBlur = 20;
+    ctx.fillStyle = '#2979ff';
+    ctx.font = 'bold 48px monospace';
+    ctx.fillText('HIGH SCORES', canvas.width / 2, 60);
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 48px monospace';
+    ctx.fillText('HIGH SCORES', canvas.width / 2, 60);
+
+    const scores = loadHighScores();
+    const tableTop = 120;
+    const rowHeight = 38;
+
+    // Header
+    ctx.fillStyle = '#666';
+    ctx.font = '16px monospace';
+    ctx.textAlign = 'center';
+    ctx.fillText('RANK', canvas.width / 2 - 200, tableTop);
+    ctx.fillText('NAME', canvas.width / 2 - 80, tableTop);
+    ctx.fillText('SCORE', canvas.width / 2 + 60, tableTop);
+    ctx.fillText('DATE', canvas.width / 2 + 190, tableTop);
+
+    // Divider
+    ctx.strokeStyle = '#333';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(canvas.width / 2 - 270, tableTop + 15);
+    ctx.lineTo(canvas.width / 2 + 270, tableTop + 15);
+    ctx.stroke();
+
+    if (scores.length === 0) {
+        ctx.fillStyle = '#555';
+        ctx.font = '20px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('No scores yet. Go play!', canvas.width / 2, tableTop + 80);
+    } else {
+        for (let i = 0; i < scores.length; i++) {
+            const entry = scores[i];
+            const y = tableTop + 35 + i * rowHeight;
+            const isNew = highScoreJustEntered && i === scores.findIndex(s => s.score === score);
+
+            ctx.fillStyle = isNew ? '#ffea00' : (i < 3 ? '#fff' : '#aaa');
+            ctx.font = i < 3 ? 'bold 18px monospace' : '18px monospace';
+
+            ctx.textAlign = 'center';
+            ctx.fillText(`${i + 1}.`, canvas.width / 2 - 200, y);
+            ctx.fillText(entry.initials, canvas.width / 2 - 80, y);
+            ctx.fillText(String(entry.score), canvas.width / 2 + 60, y);
+            ctx.fillText(entry.date, canvas.width / 2 + 190, y);
+        }
+    }
+
+    // Footer
+    const footerY = canvas.height - 40;
+    if (Math.floor(Date.now() / 600) % 2 === 0) {
+        ctx.fillStyle = '#ffea00';
+        ctx.font = '20px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText(highScoreJustEntered ? 'Press Space to Play Again' : 'Press Escape to go back', canvas.width / 2, footerY);
     }
 
     ctx.restore();
@@ -368,6 +588,14 @@ function draw() {
 
         case GameState.WIN:
             drawWinScreen();
+            break;
+
+        case GameState.HIGH_SCORE_ENTRY:
+            drawHighScoreEntryScreen();
+            break;
+
+        case GameState.HIGH_SCORES:
+            drawHighScoresScreen();
             break;
     }
 
