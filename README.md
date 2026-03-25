@@ -42,7 +42,9 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 - The ball bounces off walls, the ceiling, and your paddle
 - Where the ball hits the paddle affects its angle — edges send it at sharper angles, center sends it straight up
 - Lose a life when the ball falls below the paddle
-- Game over when all lives are lost; clear all bricks to win
+- Game over when all lives are lost
+- Clear all bricks in a level to advance to the next one
+- Beat all 3 levels to win the game
 
 ### Scoring
 
@@ -56,7 +58,19 @@ Points depend on which row the brick is in — higher rows are worth more:
 | 4 | Green | 20 |
 | 5 (bottom) | Blue | 10 |
 
-**Maximum possible score:** 1,500 (50 bricks × weighted points)
+Point values increase in later levels — for example, the top row awards 50 in Level 1, 60 in Level 2, and 70 in Level 3.
+
+### Levels
+
+The game features 3 levels with increasing difficulty. Clearing all bricks advances you to the next level — beat them all to win.
+
+| Level | Name | Layout | Ball Speed | Paddle Width |
+|-------|------|--------|------------|--------------|
+| 1 | Classic | Full 5×10 grid | 4 | 100px |
+| 2 | Fortress | Diamond-gap pattern (6 rows) | 4.5 | 90px |
+| 3 | Gauntlet | Checkerboard top + solid bottom (7 rows) | 5 | 80px |
+
+Each level introduces new brick patterns and tighter difficulty — the ball gets faster and the paddle shrinks. Your score carries over between levels, so higher levels also offer more points per brick.
 
 ### High Scores
 
@@ -75,9 +89,11 @@ The game uses a state machine with the following states:
 | **Playing** | Active gameplay with ball, paddle, and bricks |
 | **Paused** | Gameplay frozen — press Escape to resume |
 | **Game Over** | All lives lost — enter high score or restart |
-| **Win** | All bricks cleared — enter high score or play again |
+| **Win** | All levels cleared — enter high score or play again |
 | **High Score Entry** | Type 3-letter initials after a qualifying score |
 | **High Scores** | Leaderboard view |
+
+The HUD shows your score (top-left), lives (top-right), and current level number (top-center) during gameplay.
 
 The game loop uses `requestAnimationFrame` with delta-time normalization (targeting 60fps), so gameplay runs at consistent speed regardless of your monitor's refresh rate. A delta clamp prevents physics glitches after switching back from another tab.
 
