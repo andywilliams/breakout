@@ -2,8 +2,8 @@
 // BREAKOUT - HTML5 Canvas Game
 // ============================================================
 
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
+const ctx = canvas.getContext('2d')!;
 
 // --- Game States ---
 const GameState = {
@@ -13,9 +13,11 @@ const GameState = {
     WIN: 'win',
     HIGH_SCORE_ENTRY: 'highScoreEntry',
     HIGH_SCORES: 'highScores',
-};
+} as const;
 
-let state = GameState.START;
+type GameStateValue = (typeof GameState)[keyof typeof GameState];
+
+let state: GameStateValue = GameState.START;
 let score = 0;
 let lives = 3;
 let ballLaunched = false;
@@ -26,7 +28,13 @@ const MAX_HIGH_SCORES = 10;
 let initialsBuffer = '';
 let highScoreJustEntered = false;
 
-function loadHighScores() {
+interface HighScoreEntry {
+    initials: string;
+    score: number;
+    date: string;
+}
+
+function loadHighScores(): HighScoreEntry[] {
     try {
         const data = localStorage.getItem(HIGH_SCORE_KEY);
         return data ? JSON.parse(data) : [];
@@ -35,7 +43,7 @@ function loadHighScores() {
     }
 }
 
-function saveHighScores(scores) {
+function saveHighScores(scores: HighScoreEntry[]): void {
     try {
         localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(scores));
     } catch {
@@ -43,13 +51,13 @@ function saveHighScores(scores) {
     }
 }
 
-function isHighScore(newScore) {
+function isHighScore(newScore: number): boolean {
     if (newScore <= 0) return false;
     const scores = loadHighScores();
-    return scores.length < MAX_HIGH_SCORES || newScore > scores[scores.length - 1].score;
+    return scores.length < MAX_HIGH_SCORES || newScore > scores[scores.length - 1]!.score;
 }
 
-function addHighScore(initials, newScore) {
+function addHighScore(initials: string, newScore: number): void {
     const scores = loadHighScores();
     scores.push({
         initials: initials.toUpperCase(),
@@ -95,12 +103,22 @@ const brickConfig = {
     points: [50, 40, 30, 20, 10], // top rows worth more
 };
 
-let bricks = [];
+interface Brick {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    color: string;
+    points: number;
+    alive: boolean;
+}
+
+let bricks: Brick[] = [];
 
 // --- Input ---
-const keys = {};
+const keys: Record<string, boolean> = {};
 
-document.addEventListener('keydown', (e) => {
+document.addEventListener('keydown', (e: KeyboardEvent) => {
     keys[e.key] = true;
 
     if (state === GameState.HIGH_SCORE_ENTRY) {
@@ -153,7 +171,7 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
-document.addEventListener('keyup', (e) => {
+document.addEventListener('keyup', (e: KeyboardEvent) => {
     keys[e.key] = false;
 });
 
@@ -165,7 +183,7 @@ canvas.addEventListener('click', () => {
 });
 
 // --- Mouse Control ---
-canvas.addEventListener('mousemove', (e) => {
+canvas.addEventListener('mousemove', (e: MouseEvent) => {
     if (state !== GameState.PLAYING) return;
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
@@ -174,26 +192,26 @@ canvas.addEventListener('mousemove', (e) => {
 });
 
 // --- Touch Control ---
-canvas.addEventListener('touchmove', (e) => {
+canvas.addEventListener('touchmove', (e: TouchEvent) => {
     if (state !== GameState.PLAYING) return;
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
-    const touchX = (e.touches[0].clientX - rect.left) * scaleX;
+    const touchX = (e.touches[0]!.clientX - rect.left) * scaleX;
     paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, touchX - paddle.width / 2));
 }, { passive: false });
 
-canvas.addEventListener('touchstart', (e) => {
+canvas.addEventListener('touchstart', (e: TouchEvent) => {
     if (state !== GameState.PLAYING) return;
     e.preventDefault();
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
-    const touchX = (e.touches[0].clientX - rect.left) * scaleX;
+    const touchX = (e.touches[0]!.clientX - rect.left) * scaleX;
     paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, touchX - paddle.width / 2));
 }, { passive: false });
 
 // --- Initialization ---
-function initPositions() {
+function initPositions(): void {
     paddle.x = (canvas.width - paddle.width) / 2;
     paddle.y = canvas.height - 40;
 
@@ -204,7 +222,7 @@ function initPositions() {
     ball.dy = 0;
 }
 
-function launchBall() {
+function launchBall(): void {
     if (ballLaunched) return;
     ballLaunched = true;
     const angle = (Math.random() - 0.5) * Math.PI * 0.5; // random angle ±45°
@@ -212,7 +230,7 @@ function launchBall() {
     ball.dy = -ball.speed * Math.cos(angle);
 }
 
-function createBricks() {
+function createBricks(): void {
     bricks = [];
     for (let row = 0; row < brickConfig.rows; row++) {
         for (let col = 0; col < brickConfig.cols; col++) {
@@ -221,27 +239,27 @@ function createBricks() {
                 y: brickConfig.offsetTop + row * (brickConfig.height + brickConfig.padding),
                 width: brickConfig.width,
                 height: brickConfig.height,
-                color: brickConfig.colors[row],
-                points: brickConfig.points[row],
+                color: brickConfig.colors[row]!,
+                points: brickConfig.points[row]!,
                 alive: true,
             });
         }
     }
 }
 
-function resetGame() {
+function resetGame(): void {
     score = 0;
     lives = 3;
     createBricks();
     initPositions();
 }
 
-function startGame() {
+function startGame(): void {
     state = GameState.PLAYING;
 }
 
 // --- Update ---
-function update() {
+function update(): void {
     if (state !== GameState.PLAYING) return;
 
     // Paddle movement
@@ -336,7 +354,7 @@ function update() {
 }
 
 // --- Drawing ---
-function drawBall() {
+function drawBall(): void {
     ctx.beginPath();
     ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
     ctx.fillStyle = ball.color;
@@ -344,7 +362,7 @@ function drawBall() {
     ctx.closePath();
 }
 
-function drawPaddle() {
+function drawPaddle(): void {
     ctx.fillStyle = paddle.color;
     ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
 
@@ -355,7 +373,7 @@ function drawPaddle() {
     ctx.shadowBlur = 0;
 }
 
-function drawBricks() {
+function drawBricks(): void {
     for (const brick of bricks) {
         if (!brick.alive) continue;
         ctx.fillStyle = brick.color;
@@ -363,7 +381,7 @@ function drawBricks() {
     }
 }
 
-function drawHUD() {
+function drawHUD(): void {
     ctx.fillStyle = '#aaa';
     ctx.font = '16px monospace';
     ctx.textAlign = 'left';
@@ -382,7 +400,7 @@ function drawHUD() {
 
 // --- Screen Rendering ---
 
-function drawStartScreen() {
+function drawStartScreen(): void {
     // Background
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -420,13 +438,13 @@ function drawStartScreen() {
     // Controls hint
     ctx.fillStyle = '#555';
     ctx.font = '14px monospace';
-    ctx.fillText('← → or A/D to move', canvas.width / 2, canvas.height / 2 + 130);
+    ctx.fillText('\u2190 \u2192 or A/D to move', canvas.width / 2, canvas.height / 2 + 130);
     ctx.fillText('Press H for High Scores', canvas.width / 2, canvas.height / 2 + 155);
 
     ctx.restore();
 }
 
-function drawGameOverScreen() {
+function drawGameOverScreen(): void {
     // Dark overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -463,7 +481,7 @@ function drawGameOverScreen() {
     ctx.restore();
 }
 
-function drawWinScreen() {
+function drawWinScreen(): void {
     // Dark overlay
     ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -500,7 +518,7 @@ function drawWinScreen() {
     ctx.restore();
 }
 
-function drawHighScoreEntryScreen() {
+function drawHighScoreEntryScreen(): void {
     ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -548,7 +566,7 @@ function drawHighScoreEntryScreen() {
         if (i < initialsBuffer.length) {
             ctx.fillStyle = '#fff';
             ctx.font = 'bold 32px monospace';
-            ctx.fillText(initialsBuffer[i], bx + boxSize / 2, boxY + boxSize / 2);
+            ctx.fillText(initialsBuffer[i]!, bx + boxSize / 2, boxY + boxSize / 2);
         } else if (i === initialsBuffer.length) {
             // Blinking cursor
             if (Math.floor(Date.now() / 400) % 2 === 0) {
@@ -567,7 +585,7 @@ function drawHighScoreEntryScreen() {
     ctx.restore();
 }
 
-function drawHighScoresScreen() {
+function drawHighScoresScreen(): void {
     ctx.fillStyle = '#111';
     ctx.fillRect(0, 0, canvas.width, canvas.height);
 
@@ -615,7 +633,7 @@ function drawHighScoresScreen() {
         ctx.fillText('No scores yet. Go play!', canvas.width / 2, tableTop + 80);
     } else {
         for (let i = 0; i < scores.length; i++) {
-            const entry = scores[i];
+            const entry = scores[i]!;
             const y = tableTop + 35 + i * rowHeight;
             const isNew = highScoreJustEntered && i === scores.findIndex(s => s.score === score);
 
@@ -643,7 +661,7 @@ function drawHighScoresScreen() {
 }
 
 // --- Game Loop ---
-function draw() {
+function draw(): void {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Background
