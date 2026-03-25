@@ -874,14 +874,24 @@ class Game {
 
     _explodeNeighbors(source: Brick): void {
         const range = brickConfig.width + brickConfig.padding + 4; // slightly more than one brick span
-        for (const brick of this.bricks) {
-            if (!brick.alive || brick === source) continue;
-            if (brick.type === BrickType.INDESTRUCTIBLE) continue;
-            const dx = (brick.x + brick.width / 2) - (source.x + source.width / 2);
-            const dy = (brick.y + brick.height / 2) - (source.y + source.height / 2);
-            if (Math.abs(dx) <= range && Math.abs(dy) <= range) {
-                brick.alive = false;
-                this.score += brick.points;
+        const exploded = new Set<Brick>([source]);
+        const queue: Brick[] = [source];
+
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            for (const brick of this.bricks) {
+                if (!brick.alive || exploded.has(brick)) continue;
+                if (brick.type === BrickType.INDESTRUCTIBLE) continue;
+                const dx = (brick.x + brick.width / 2) - (current.x + current.width / 2);
+                const dy = (brick.y + brick.height / 2) - (current.y + current.height / 2);
+                if (Math.abs(dx) <= range && Math.abs(dy) <= range) {
+                    brick.alive = false;
+                    this.score += brick.points;
+                    exploded.add(brick);
+                    if (brick.type === BrickType.EXPLOSIVE) {
+                        queue.push(brick);
+                    }
+                }
             }
         }
     }
