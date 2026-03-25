@@ -35,10 +35,15 @@ function loadHighScores() {
 }
 
 function saveHighScores(scores) {
-    localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(scores));
+    try {
+        localStorage.setItem(HIGH_SCORE_KEY, JSON.stringify(scores));
+    } catch {
+        // localStorage may be unavailable (private browsing, quota exceeded)
+    }
 }
 
 function isHighScore(newScore) {
+    if (newScore <= 0) return false;
     const scores = loadHighScores();
     return scores.length < MAX_HIGH_SCORES || newScore > scores[scores.length - 1].score;
 }
