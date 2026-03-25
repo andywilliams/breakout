@@ -183,6 +183,25 @@ class SoundManager {
         });
     }
 
+    comboMilestone(multiplier: number): void {
+        this._play((ctx, dest) => {
+            // Rising arpeggio — pitch increases with multiplier
+            const baseFreq = 523 + (multiplier - 2) * 100; // C5 and up
+            for (let i = 0; i < 3; i++) {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                const t = ctx.currentTime + i * 0.04;
+                osc.frequency.setValueAtTime(baseFreq + i * 150, t);
+                gain.gain.setValueAtTime(0.3, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.08);
+                osc.connect(gain).connect(dest);
+                osc.start(t);
+                osc.stop(t + 0.08);
+            }
+        });
+    }
+
     laserShoot(): void {
         this._play((ctx, dest) => {
             const osc = ctx.createOscillator();
@@ -557,6 +576,9 @@ class Game {
     lastLaserTime: number;
     stickyBallOffset: number | null; // offset from paddle.x when ball is stuck
     baseSpeed: number; // level base ball speed, used for slow/speed revert
+    comboCount: number;
+    comboMultiplier: number;
+    comboDisplayTimer: number; // ms remaining to show combo popup
 
     lastTime: number;
     animFrameId: number | null;
@@ -609,6 +631,9 @@ class Game {
         this.lastLaserTime = 0;
         this.stickyBallOffset = null;
         this.baseSpeed = 4;
+        this.comboCount = 0;
+        this.comboMultiplier = 1;
+        this.comboDisplayTimer = 0;
 
         // Delta time tracking
         this.lastTime = 0;
@@ -836,6 +861,9 @@ class Game {
         this.powerUps = [];
         this.lasers = [];
         this.extraBalls = [];
+        this.comboCount = 0;
+        this.comboMultiplier = 1;
+        this.comboDisplayTimer = 0;
         if (this.activeEffect) this._expireEffect();
         this._applyLevelConfig();
         this.createBricks();
@@ -1055,13 +1083,35 @@ class Game {
         );
     }
 
+    _incrementCombo(): void {
+        this.comboCount++;
+        const oldMultiplier = this.comboMultiplier;
+        // 2x at 3 hits, 3x at 6 hits, 4x at 10 hits, 5x at 15 hits...
+        if (this.comboCount >= 15) this.comboMultiplier = 5;
+        else if (this.comboCount >= 10) this.comboMultiplier = 4;
+        else if (this.comboCount >= 6) this.comboMultiplier = 3;
+        else if (this.comboCount >= 3) this.comboMultiplier = 2;
+        else this.comboMultiplier = 1;
+
+        if (this.comboMultiplier > oldMultiplier) {
+            soundManager.comboMilestone(this.comboMultiplier);
+            this.comboDisplayTimer = 1500; // show milestone popup for 1.5s
+        }
+    }
+
+    _resetCombo(): void {
+        this.comboCount = 0;
+        this.comboMultiplier = 1;
+    }
+
     _hitBrick(brick: Brick): void {
         if (brick.type === BrickType.INDESTRUCTIBLE) return;
 
         brick.hitsLeft--;
         if (brick.hitsLeft <= 0) {
             brick.alive = false;
-            this.score += brick.points;
+            this._incrementCombo();
+            this.score += brick.points * this.comboMultiplier;
             soundManager.brickBreak(brick.type);
             this._trySpawnPowerUp(brick);
 
@@ -1095,7 +1145,8 @@ class Game {
                 const dy = (brick.y + brick.height / 2) - (current.y + current.height / 2);
                 if (Math.abs(dx) <= range && Math.abs(dy) <= range) {
                     brick.alive = false;
-                    this.score += brick.points;
+                    this._incrementCombo();
+                    this.score += brick.points * this.comboMultiplier;
                     exploded.add(brick);
                     if (brick.type === BrickType.EXPLOSIVE) {
                         queue.push(brick);
@@ -1307,6 +1358,9 @@ class Game {
             ball.x <= paddle.x + paddle.width
         ) {
             soundManager.paddleHit();
+            if (this.extraBalls.length === 0) {
+                this._resetCombo();
+            }
             if (this.activeEffect?.type === PowerUpType.STICKY_PADDLE) {
                 // Stick ball to paddle
                 this.stickyBallOffset = ball.x - paddle.x;
@@ -1335,6 +1389,7 @@ class Game {
                 this.ball.radius = promoted.radius;
             } else {
                 this.lives--;
+                this._resetCombo();
                 this.powerUps = [];
                 this.lasers = [];
                 this.extraBalls = [];
@@ -1361,6 +1416,11 @@ class Game {
 
         // Update lasers
         this._updateLasers(dt);
+
+        // Update combo display timer
+        if (this.comboDisplayTimer > 0) {
+            this.comboDisplayTimer -= dt * TARGET_DT;
+        }
 
         // Update active effect timer (convert normalized dt back to ms)
         if (this.activeEffect) {
@@ -1515,6 +1575,35 @@ class Game {
         ctx.fillText(`Level ${this.currentLevel + 1}`, canvas.width / 2, 30);
         ctx.textAlign = 'right';
         ctx.fillText(`Lives: ${this.lives}`, canvas.width - 15, 30);
+
+        // Combo counter (below score, only visible during active combo)
+        if (this.comboCount >= 2) {
+            const comboAlpha = this.comboMultiplier > 1 ? 1.0 : 0.7;
+            ctx.font = 'bold 14px monospace';
+            ctx.textAlign = 'left';
+            if (this.comboMultiplier > 1) {
+                ctx.fillStyle = this.comboMultiplier >= 4 ? '#ff1744' :
+                                this.comboMultiplier >= 3 ? '#ff9100' :
+                                '#ffea00';
+            } else {
+                ctx.fillStyle = `rgba(170, 170, 170, ${comboAlpha})`;
+            }
+            ctx.fillText(`Combo: ${this.comboCount} (${this.comboMultiplier}x)`, 15, 50);
+        }
+
+        // Combo milestone popup (centered, fades out)
+        if (this.comboDisplayTimer > 0 && this.comboMultiplier > 1) {
+            const fade = Math.min(1, this.comboDisplayTimer / 500);
+            const yOffset = (1 - fade) * 10;
+            ctx.globalAlpha = fade;
+            ctx.font = 'bold 28px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = this.comboMultiplier >= 4 ? '#ff1744' :
+                            this.comboMultiplier >= 3 ? '#ff9100' :
+                            '#ffea00';
+            ctx.fillText(`${this.comboMultiplier}x COMBO!`, canvas.width / 2, 90 - yOffset);
+            ctx.globalAlpha = 1;
+        }
 
         // Sound indicator
         ctx.fillStyle = soundManager.muted ? '#555' : '#aaa';
