@@ -44,6 +44,23 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 - Lose a life when the ball falls below the paddle
 - Game over when all lives are lost; clear all bricks to win
 
+### Power-Ups
+
+Destroying a brick has a **20% chance** to drop a power-up capsule. The capsule falls toward the bottom of the screen — catch it with your paddle to activate the effect.
+
+| Power-Up | Label | Color | Effect |
+|----------|-------|-------|--------|
+| **Wide Paddle** | W | Green | Expands paddle width by 50% |
+| **Sticky Paddle** | S | Purple | Ball sticks to paddle on contact — press `Space` or click to release |
+| **Laser Paddle** | L | Red | Press `Space` to fire lasers that destroy bricks |
+
+**How it works:**
+
+- Each power-up lasts **10 seconds** — a colored timer bar at the top of the screen shows the remaining duration
+- Only **one power-up can be active** at a time; catching a new one replaces the current effect
+- Power-ups are **cleared** when you lose a life, advance to the next level, or restart the game
+- If a capsule falls off the bottom of the screen without being caught, it despawns
+
 ### Scoring
 
 Points depend on which row the brick is in — higher rows are worth more:
