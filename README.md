@@ -32,6 +32,7 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 | Touch | Paddle follows touch position |
 | `Space` or Click | Launch ball / Start game |
 | `Escape` | Pause / Resume (during gameplay) |
+| `M` | Toggle sound effects on/off |
 | `H` | View high scores (from start screen) |
 | `Escape` | Return to start screen (from high scores) |
 
@@ -88,6 +89,25 @@ The game features 8 levels with increasing difficulty. Each level has a unique b
 | 7 | Labyrinth | Maze of indestructible walls with explosive shortcuts | Standard, Multi-2, Indestructible, Explosive | 5.0 | 85 |
 | 8 | Endgame | Everything combined, maximum density | All types | 5.5 | 80 |
 
+### Sound Effects
+
+All sounds are generated in real-time using the **Web Audio API** — no audio files required. Each gameplay action has a distinct sound that varies by context:
+
+| Event | Description |
+|-------|-------------|
+| **Paddle hit** | Short rising tone |
+| **Wall bounce** | Quick tap |
+| **Brick break** | Pitch-shifted pop (varies by brick type) |
+| **Brick damage** | Higher metallic ping for multi-hit bricks |
+| **Explosive brick** | Low rumbling burst |
+| **Power-up collect** | Ascending chime |
+| **Laser shoot** | Sharp zap |
+| **Life lost** | Descending tone |
+| **Game over** | Low sustained drone |
+| **Level clear** | Celebratory ascending arpeggio |
+
+Press **M** to toggle mute — the current state (`SFX ON` / `MUTED`) is shown in the top-right corner of the HUD.
+
 ### Scoring
 
 Points depend on which row a brick is in — higher rows are worth more. Point values increase in later levels to reward progression. For example, Level 1's top row awards 50 points per brick, while Level 8's top row awards 80.
@@ -122,6 +142,7 @@ The game loop uses `requestAnimationFrame` with delta-time normalization (target
 - **[Vite](https://vite.dev/)** — Dev server and build tool
 - **TypeScript** — Strict mode with `noUncheckedIndexedAccess`
 - **HTML5 Canvas** — All rendering (no external graphics libraries)
+- **Web Audio API** — Procedural sound effects (no audio files)
 
 ## Project Structure
 
