@@ -2,13 +2,11 @@
 // BREAKOUT - HTML5 Canvas Game
 // ============================================================
 
-const canvas = document.getElementById('gameCanvas') as HTMLCanvasElement;
-const ctx = canvas.getContext('2d')!;
-
 // --- Game States ---
 const GameState = {
-    START: 'start',
+    MENU: 'menu',
     PLAYING: 'playing',
+    PAUSED: 'paused',
     GAME_OVER: 'gameOver',
     WIN: 'win',
     HIGH_SCORE_ENTRY: 'highScoreEntry',
@@ -17,16 +15,9 @@ const GameState = {
 
 type GameStateValue = (typeof GameState)[keyof typeof GameState];
 
-let state: GameStateValue = GameState.START;
-let score = 0;
-let lives = 3;
-let ballLaunched = false;
-
 // --- High Scores ---
 const HIGH_SCORE_KEY = 'breakout_high_scores';
 const MAX_HIGH_SCORES = 10;
-let initialsBuffer = '';
-let highScoreJustEntered = false;
 
 interface HighScoreEntry {
     initials: string;
@@ -69,28 +60,7 @@ function addHighScore(initials: string, newScore: number): void {
     saveHighScores(scores);
 }
 
-// --- Paddle ---
-const paddle = {
-    width: 100,
-    height: 14,
-    x: 0,
-    y: 0,
-    speed: 7,
-    color: '#00e5ff',
-};
-
-// --- Ball ---
-const ball = {
-    x: 0,
-    y: 0,
-    radius: 8,
-    dx: 4,
-    dy: -4,
-    speed: 4,
-    color: '#fff',
-};
-
-// --- Bricks ---
+// --- Brick Config ---
 const brickConfig = {
     rows: 5,
     cols: 10,
@@ -113,596 +83,750 @@ interface Brick {
     alive: boolean;
 }
 
-let bricks: Brick[] = [];
+// Target frame duration for delta time normalization (60 fps)
+const TARGET_DT = 1000 / 60;
 
-// --- Input ---
-const keys: Record<string, boolean> = {};
+interface Paddle {
+    width: number;
+    height: number;
+    x: number;
+    y: number;
+    speed: number;
+    color: string;
+}
 
-document.addEventListener('keydown', (e: KeyboardEvent) => {
-    keys[e.key] = true;
+interface Ball {
+    x: number;
+    y: number;
+    radius: number;
+    dx: number;
+    dy: number;
+    speed: number;
+    color: string;
+}
 
-    if (state === GameState.HIGH_SCORE_ENTRY) {
-        e.preventDefault();
-        if (e.key === 'Backspace') {
-            initialsBuffer = initialsBuffer.slice(0, -1);
-        } else if (e.key === 'Enter' && initialsBuffer.length > 0) {
-            addHighScore(initialsBuffer, score);
-            initialsBuffer = '';
-            highScoreJustEntered = true;
-            state = GameState.HIGH_SCORES;
-        } else if (/^[a-zA-Z]$/.test(e.key) && initialsBuffer.length < 3) {
-            initialsBuffer += e.key.toUpperCase();
-        }
-        return;
-    }
+class Game {
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
 
-    if (e.key === ' ' || e.code === 'Space') {
-        e.preventDefault();
-        if (state === GameState.PLAYING && !ballLaunched) {
-            launchBall();
-        } else if (state === GameState.START) {
-            startGame();
-        } else if (state === GameState.GAME_OVER || state === GameState.WIN) {
-            if (score > 0 && isHighScore(score)) {
-                initialsBuffer = '';
-                highScoreJustEntered = false;
-                state = GameState.HIGH_SCORE_ENTRY;
-            } else {
-                resetGame();
-                startGame();
+    state: GameStateValue;
+    score: number;
+    lives: number;
+    ballLaunched: boolean;
+    initialsBuffer: string;
+    highScoreJustEntered: boolean;
+
+    paddle: Paddle;
+    ball: Ball;
+    bricks: Brick[];
+    keys: Record<string, boolean>;
+
+    lastTime: number;
+    animFrameId: number | null;
+
+    // Bound event handlers for cleanup
+    private _onKeyDown: (e: KeyboardEvent) => void;
+    private _onKeyUp: (e: KeyboardEvent) => void;
+    private _onClick: () => void;
+    private _onMouseMove: (e: MouseEvent) => void;
+    private _onTouchMove: (e: TouchEvent) => void;
+    private _onTouchStart: (e: TouchEvent) => void;
+
+    constructor(canvasId: string) {
+        this.canvas = document.getElementById(canvasId) as HTMLCanvasElement;
+        this.ctx = this.canvas.getContext('2d')!;
+
+        this.state = GameState.MENU;
+        this.score = 0;
+        this.lives = 3;
+        this.ballLaunched = false;
+        this.initialsBuffer = '';
+        this.highScoreJustEntered = false;
+
+        this.paddle = {
+            width: 100,
+            height: 14,
+            x: 0,
+            y: 0,
+            speed: 7,
+            color: '#00e5ff',
+        };
+
+        this.ball = {
+            x: 0,
+            y: 0,
+            radius: 8,
+            dx: 4,
+            dy: -4,
+            speed: 4,
+            color: '#fff',
+        };
+
+        this.bricks = [];
+        this.keys = {};
+
+        // Delta time tracking
+        this.lastTime = 0;
+        this.animFrameId = null;
+
+        // Initialize bound handlers
+        this._onKeyDown = (e: KeyboardEvent) => this._handleKeyDown(e);
+        this._onKeyUp = (e: KeyboardEvent) => { this.keys[e.key] = false; };
+        this._onClick = () => {
+            if (this.state === GameState.PLAYING && !this.ballLaunched) {
+                this.launchBall();
             }
-        } else if (state === GameState.HIGH_SCORES) {
-            resetGame();
-            startGame();
+        };
+        this._onMouseMove = (e: MouseEvent) => {
+            if (this.state !== GameState.PLAYING) return;
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = this.canvas.width / rect.width;
+            const mouseX = (e.clientX - rect.left) * scaleX;
+            this.paddle.x = Math.max(0, Math.min(this.canvas.width - this.paddle.width, mouseX - this.paddle.width / 2));
+        };
+        this._onTouchMove = (e: TouchEvent) => {
+            if (this.state !== GameState.PLAYING) return;
+            e.preventDefault();
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = this.canvas.width / rect.width;
+            const touchX = (e.touches[0]!.clientX - rect.left) * scaleX;
+            this.paddle.x = Math.max(0, Math.min(this.canvas.width - this.paddle.width, touchX - this.paddle.width / 2));
+        };
+        this._onTouchStart = (e: TouchEvent) => {
+            if (this.state !== GameState.PLAYING) return;
+            e.preventDefault();
+            const rect = this.canvas.getBoundingClientRect();
+            const scaleX = this.canvas.width / rect.width;
+            const touchX = (e.touches[0]!.clientX - rect.left) * scaleX;
+            this.paddle.x = Math.max(0, Math.min(this.canvas.width - this.paddle.width, touchX - this.paddle.width / 2));
+        };
+
+        this._bindEvents();
+        this.resetGame();
+        this.start();
+    }
+
+    // --- Event Binding ---
+    _bindEvents(): void {
+        document.addEventListener('keydown', this._onKeyDown);
+        document.addEventListener('keyup', this._onKeyUp);
+        this.canvas.addEventListener('click', this._onClick);
+        this.canvas.addEventListener('mousemove', this._onMouseMove);
+        this.canvas.addEventListener('touchmove', this._onTouchMove, { passive: false });
+        this.canvas.addEventListener('touchstart', this._onTouchStart, { passive: false });
+    }
+
+    _handleKeyDown(e: KeyboardEvent): void {
+        this.keys[e.key] = true;
+
+        if (this.state === GameState.HIGH_SCORE_ENTRY) {
+            e.preventDefault();
+            if (e.key === 'Backspace') {
+                this.initialsBuffer = this.initialsBuffer.slice(0, -1);
+            } else if (e.key === 'Enter' && this.initialsBuffer.length > 0) {
+                addHighScore(this.initialsBuffer, this.score);
+                this.initialsBuffer = '';
+                this.highScoreJustEntered = true;
+                this.state = GameState.HIGH_SCORES;
+            } else if (/^[a-zA-Z]$/.test(e.key) && this.initialsBuffer.length < 3) {
+                this.initialsBuffer += e.key.toUpperCase();
+            }
+            return;
+        }
+
+        if (e.key === ' ' || e.code === 'Space') {
+            e.preventDefault();
+            if (this.state === GameState.PLAYING && !this.ballLaunched) {
+                this.launchBall();
+            } else if (this.state === GameState.MENU) {
+                this.startPlaying();
+            } else if (this.state === GameState.GAME_OVER || this.state === GameState.WIN) {
+                if (this.score > 0 && isHighScore(this.score)) {
+                    this.initialsBuffer = '';
+                    this.highScoreJustEntered = false;
+                    this.state = GameState.HIGH_SCORE_ENTRY;
+                } else {
+                    this.resetGame();
+                    this.startPlaying();
+                }
+            } else if (this.state === GameState.HIGH_SCORES) {
+                this.resetGame();
+                this.startPlaying();
+            }
+        }
+
+        if (e.key === 'h' || e.key === 'H') {
+            if (this.state === GameState.MENU) {
+                this.highScoreJustEntered = false;
+                this.state = GameState.HIGH_SCORES;
+            }
+        }
+
+        if (e.key === 'Escape') {
+            if (this.state === GameState.PLAYING) {
+                this.state = GameState.PAUSED;
+            } else if (this.state === GameState.PAUSED) {
+                this.state = GameState.PLAYING;
+            } else if (this.state === GameState.HIGH_SCORES) {
+                this.state = GameState.MENU;
+            }
         }
     }
 
-    if (e.key === 'h' || e.key === 'H') {
-        if (state === GameState.START) {
-            highScoreJustEntered = false;
-            state = GameState.HIGH_SCORES;
+    // --- Game Loop ---
+    start(): void {
+        this.lastTime = performance.now();
+        this._loop(this.lastTime);
+    }
+
+    stop(): void {
+        if (this.animFrameId !== null) {
+            cancelAnimationFrame(this.animFrameId);
+            this.animFrameId = null;
         }
     }
 
-    if (e.key === 'Escape') {
-        if (state === GameState.HIGH_SCORES) {
-            state = GameState.START;
-        }
-    }
-});
-
-document.addEventListener('keyup', (e: KeyboardEvent) => {
-    keys[e.key] = false;
-});
-
-// --- Click to Launch ---
-canvas.addEventListener('click', () => {
-    if (state === GameState.PLAYING && !ballLaunched) {
-        launchBall();
-    }
-});
-
-// --- Mouse Control ---
-canvas.addEventListener('mousemove', (e: MouseEvent) => {
-    if (state !== GameState.PLAYING) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const mouseX = (e.clientX - rect.left) * scaleX;
-    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, mouseX - paddle.width / 2));
-});
-
-// --- Touch Control ---
-canvas.addEventListener('touchmove', (e: TouchEvent) => {
-    if (state !== GameState.PLAYING) return;
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const touchX = (e.touches[0]!.clientX - rect.left) * scaleX;
-    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, touchX - paddle.width / 2));
-}, { passive: false });
-
-canvas.addEventListener('touchstart', (e: TouchEvent) => {
-    if (state !== GameState.PLAYING) return;
-    e.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const touchX = (e.touches[0]!.clientX - rect.left) * scaleX;
-    paddle.x = Math.max(0, Math.min(canvas.width - paddle.width, touchX - paddle.width / 2));
-}, { passive: false });
-
-// --- Initialization ---
-function initPositions(): void {
-    paddle.x = (canvas.width - paddle.width) / 2;
-    paddle.y = canvas.height - 40;
-
-    ballLaunched = false;
-    ball.x = paddle.x + paddle.width / 2;
-    ball.y = paddle.y - ball.radius - 2;
-    ball.dx = 0;
-    ball.dy = 0;
-}
-
-function launchBall(): void {
-    if (ballLaunched) return;
-    ballLaunched = true;
-    const angle = (Math.random() - 0.5) * Math.PI * 0.5; // random angle ±45°
-    ball.dx = ball.speed * Math.sin(angle);
-    ball.dy = -ball.speed * Math.cos(angle);
-}
-
-function createBricks(): void {
-    bricks = [];
-    for (let row = 0; row < brickConfig.rows; row++) {
-        for (let col = 0; col < brickConfig.cols; col++) {
-            bricks.push({
-                x: brickConfig.offsetLeft + col * (brickConfig.width + brickConfig.padding),
-                y: brickConfig.offsetTop + row * (brickConfig.height + brickConfig.padding),
-                width: brickConfig.width,
-                height: brickConfig.height,
-                color: brickConfig.colors[row]!,
-                points: brickConfig.points[row]!,
-                alive: true,
-            });
-        }
-    }
-}
-
-function resetGame(): void {
-    score = 0;
-    lives = 3;
-    createBricks();
-    initPositions();
-}
-
-function startGame(): void {
-    state = GameState.PLAYING;
-}
-
-// --- Update ---
-function update(): void {
-    if (state !== GameState.PLAYING) return;
-
-    // Paddle movement
-    if (keys['ArrowLeft'] || keys['a']) {
-        paddle.x = Math.max(0, paddle.x - paddle.speed);
-    }
-    if (keys['ArrowRight'] || keys['d']) {
-        paddle.x = Math.min(canvas.width - paddle.width, paddle.x + paddle.speed);
+    destroy(): void {
+        this.stop();
+        document.removeEventListener('keydown', this._onKeyDown);
+        document.removeEventListener('keyup', this._onKeyUp);
+        this.canvas.removeEventListener('click', this._onClick);
+        this.canvas.removeEventListener('mousemove', this._onMouseMove);
+        this.canvas.removeEventListener('touchmove', this._onTouchMove);
+        this.canvas.removeEventListener('touchstart', this._onTouchStart);
     }
 
-    // Ball follows paddle before launch
-    if (!ballLaunched) {
-        ball.x = paddle.x + paddle.width / 2;
-        ball.y = paddle.y - ball.radius - 2;
-        return;
+    _loop(timestamp: number): void {
+        const rawDt = timestamp - this.lastTime;
+        this.lastTime = timestamp;
+
+        // Clamp delta time to avoid spiral of death after tab switch
+        const dt = Math.min(rawDt, 100) / TARGET_DT;
+
+        this._update(dt);
+        this._render();
+
+        this.animFrameId = requestAnimationFrame((t) => this._loop(t));
     }
 
-    // Ball movement
-    ball.x += ball.dx;
-    ball.y += ball.dy;
+    // --- Initialization ---
+    initPositions(): void {
+        this.paddle.x = (this.canvas.width - this.paddle.width) / 2;
+        this.paddle.y = this.canvas.height - 40;
 
-    // Wall collisions (left/right)
-    if (ball.x - ball.radius <= 0 || ball.x + ball.radius >= canvas.width) {
-        ball.dx = -ball.dx;
+        this.ballLaunched = false;
+        this.ball.x = this.paddle.x + this.paddle.width / 2;
+        this.ball.y = this.paddle.y - this.ball.radius - 2;
+        this.ball.dx = 0;
+        this.ball.dy = 0;
     }
 
-    // Ceiling collision
-    if (ball.y - ball.radius <= 0) {
-        ball.dy = -ball.dy;
+    launchBall(): void {
+        if (this.ballLaunched) return;
+        this.ballLaunched = true;
+        const angle = (Math.random() - 0.5) * Math.PI * 0.5; // random angle ±45°
+        this.ball.dx = this.ball.speed * Math.sin(angle);
+        this.ball.dy = -this.ball.speed * Math.cos(angle);
     }
 
-    // Paddle collision
-    if (
-        ball.dy > 0 &&
-        ball.y + ball.radius >= paddle.y &&
-        ball.y + ball.radius <= paddle.y + paddle.height &&
-        ball.x >= paddle.x &&
-        ball.x <= paddle.x + paddle.width
-    ) {
-        // Adjust angle based on where ball hits paddle
-        const hitPos = (ball.x - paddle.x) / paddle.width; // 0 to 1
-        const angle = (hitPos - 0.5) * Math.PI * 0.7; // -63° to +63°
-        // Normalize speed to prevent acceleration
-        ball.dx = ball.speed * Math.sin(angle);
-        ball.dy = -ball.speed * Math.cos(angle);
-    }
-
-    // Ball falls below paddle
-    if (ball.y - ball.radius > canvas.height) {
-        lives--;
-        if (lives <= 0) {
-            state = GameState.GAME_OVER;
-        } else {
-            initPositions();
+    createBricks(): void {
+        this.bricks = [];
+        for (let row = 0; row < brickConfig.rows; row++) {
+            for (let col = 0; col < brickConfig.cols; col++) {
+                this.bricks.push({
+                    x: brickConfig.offsetLeft + col * (brickConfig.width + brickConfig.padding),
+                    y: brickConfig.offsetTop + row * (brickConfig.height + brickConfig.padding),
+                    width: brickConfig.width,
+                    height: brickConfig.height,
+                    color: brickConfig.colors[row]!,
+                    points: brickConfig.points[row]!,
+                    alive: true,
+                });
+            }
         }
     }
 
-    // Brick collisions
-    for (const brick of bricks) {
-        if (!brick.alive) continue;
+    resetGame(): void {
+        this.score = 0;
+        this.lives = 3;
+        this.createBricks();
+        this.initPositions();
+    }
 
+    startPlaying(): void {
+        this.state = GameState.PLAYING;
+    }
+
+    // --- Update (delta-time scaled) ---
+    _update(dt: number): void {
+        if (this.state !== GameState.PLAYING) return;
+
+        const { paddle, ball, keys } = this;
+
+        // Paddle movement (scaled by dt)
+        if (keys['ArrowLeft'] || keys['a']) {
+            paddle.x = Math.max(0, paddle.x - paddle.speed * dt);
+        }
+        if (keys['ArrowRight'] || keys['d']) {
+            paddle.x = Math.min(this.canvas.width - paddle.width, paddle.x + paddle.speed * dt);
+        }
+
+        // Ball follows paddle before launch
+        if (!this.ballLaunched) {
+            ball.x = paddle.x + paddle.width / 2;
+            ball.y = paddle.y - ball.radius - 2;
+            return;
+        }
+
+        // Ball movement (scaled by dt)
+        ball.x += ball.dx * dt;
+        ball.y += ball.dy * dt;
+
+        // Wall collisions (left/right)
+        if (ball.x - ball.radius <= 0 || ball.x + ball.radius >= this.canvas.width) {
+            ball.dx = -ball.dx;
+        }
+
+        // Ceiling collision
+        if (ball.y - ball.radius <= 0) {
+            ball.dy = -ball.dy;
+        }
+
+        // Paddle collision
         if (
-            ball.x + ball.radius > brick.x &&
-            ball.x - ball.radius < brick.x + brick.width &&
-            ball.y + ball.radius > brick.y &&
-            ball.y - ball.radius < brick.y + brick.height
+            ball.dy > 0 &&
+            ball.y + ball.radius >= paddle.y &&
+            ball.y + ball.radius <= paddle.y + paddle.height &&
+            ball.x >= paddle.x &&
+            ball.x <= paddle.x + paddle.width
         ) {
-            brick.alive = false;
-            score += brick.points;
+            const hitPos = (ball.x - paddle.x) / paddle.width; // 0 to 1
+            const angle = (hitPos - 0.5) * Math.PI * 0.7; // -63° to +63°
+            ball.dx = ball.speed * Math.sin(angle);
+            ball.dy = -ball.speed * Math.cos(angle);
+        }
 
-            // Determine which side was hit for correct bounce direction
-            const overlapLeft = ball.x + ball.radius - brick.x;
-            const overlapRight = brick.x + brick.width - (ball.x - ball.radius);
-            const overlapTop = ball.y + ball.radius - brick.y;
-            const overlapBottom = brick.y + brick.height - (ball.y - ball.radius);
-
-            const minOverlapX = Math.min(overlapLeft, overlapRight);
-            const minOverlapY = Math.min(overlapTop, overlapBottom);
-
-            if (minOverlapX < minOverlapY) {
-                ball.dx = -ball.dx; // side hit
+        // Ball falls below paddle
+        if (ball.y - ball.radius > this.canvas.height) {
+            this.lives--;
+            if (this.lives <= 0) {
+                this.state = GameState.GAME_OVER;
             } else {
-                ball.dy = -ball.dy; // top/bottom hit
+                this.initPositions();
             }
+        }
+
+        // Brick collisions
+        for (const brick of this.bricks) {
+            if (!brick.alive) continue;
+
+            if (
+                ball.x + ball.radius > brick.x &&
+                ball.x - ball.radius < brick.x + brick.width &&
+                ball.y + ball.radius > brick.y &&
+                ball.y - ball.radius < brick.y + brick.height
+            ) {
+                brick.alive = false;
+                this.score += brick.points;
+
+                // Determine which side was hit for correct bounce direction
+                const overlapLeft = ball.x + ball.radius - brick.x;
+                const overlapRight = brick.x + brick.width - (ball.x - ball.radius);
+                const overlapTop = ball.y + ball.radius - brick.y;
+                const overlapBottom = brick.y + brick.height - (ball.y - ball.radius);
+
+                const minOverlapX = Math.min(overlapLeft, overlapRight);
+                const minOverlapY = Math.min(overlapTop, overlapBottom);
+
+                if (minOverlapX < minOverlapY) {
+                    ball.dx = -ball.dx; // side hit
+                } else {
+                    ball.dy = -ball.dy; // top/bottom hit
+                }
+            }
+        }
+
+        // Win condition
+        if (this.bricks.every((b) => !b.alive)) {
+            this.state = GameState.WIN;
         }
     }
 
-    // Win condition
-    if (bricks.every((b) => !b.alive)) {
-        state = GameState.WIN;
-    }
-}
+    // --- Render ---
+    _render(): void {
+        const { ctx, canvas } = this;
 
-// --- Drawing ---
-function drawBall(): void {
-    ctx.beginPath();
-    ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
-    ctx.fillStyle = ball.color;
-    ctx.fill();
-    ctx.closePath();
-}
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-function drawPaddle(): void {
-    ctx.fillStyle = paddle.color;
-    ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+        switch (this.state) {
+            case GameState.MENU:
+                this._drawStartScreen();
+                break;
 
-    // Paddle glow effect
-    ctx.shadowColor = paddle.color;
-    ctx.shadowBlur = 10;
-    ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
-    ctx.shadowBlur = 0;
-}
+            case GameState.PLAYING:
+                this._drawBricks();
+                this._drawPaddle();
+                this._drawBall();
+                this._drawHUD();
+                break;
 
-function drawBricks(): void {
-    for (const brick of bricks) {
-        if (!brick.alive) continue;
-        ctx.fillStyle = brick.color;
-        ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
-    }
-}
+            case GameState.PAUSED:
+                this._drawBricks();
+                this._drawPaddle();
+                this._drawBall();
+                this._drawHUD();
+                this._drawPauseOverlay();
+                break;
 
-function drawHUD(): void {
-    ctx.fillStyle = '#aaa';
-    ctx.font = '16px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText(`Score: ${score}`, 15, 30);
-    ctx.textAlign = 'right';
-    ctx.fillText(`Lives: ${lives}`, canvas.width - 15, 30);
+            case GameState.GAME_OVER:
+                this._drawBricks();
+                this._drawPaddle();
+                this._drawGameOverScreen();
+                break;
 
-    // Launch hint
-    if (!ballLaunched && Math.floor(Date.now() / 600) % 2 === 0) {
-        ctx.textAlign = 'center';
-        ctx.fillStyle = '#ffea00';
-        ctx.font = '18px monospace';
-        ctx.fillText('Press Space or Click to Launch', canvas.width / 2, canvas.height / 2);
-    }
-}
+            case GameState.WIN:
+                this._drawWinScreen();
+                break;
 
-// --- Screen Rendering ---
+            case GameState.HIGH_SCORE_ENTRY:
+                this._drawHighScoreEntryScreen();
+                break;
 
-function drawStartScreen(): void {
-    // Background
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    // Title - "BREAKOUT" with retro glow
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // Glow layers
-    ctx.shadowColor = '#00e5ff';
-    ctx.shadowBlur = 30;
-    ctx.fillStyle = '#00e5ff';
-    ctx.font = 'bold 72px monospace';
-    ctx.fillText('BREAKOUT', canvas.width / 2, canvas.height / 2 - 60);
-
-    // Solid title on top
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 72px monospace';
-    ctx.fillText('BREAKOUT', canvas.width / 2, canvas.height / 2 - 60);
-
-    // Subtitle
-    ctx.fillStyle = '#888';
-    ctx.font = '18px monospace';
-    ctx.fillText('A Classic Arcade Game', canvas.width / 2, canvas.height / 2);
-
-    // Blinking prompt
-    if (Math.floor(Date.now() / 600) % 2 === 0) {
-        ctx.fillStyle = '#ffea00';
-        ctx.font = '22px monospace';
-        ctx.fillText('Press Space to Start', canvas.width / 2, canvas.height / 2 + 80);
-    }
-
-    // Controls hint
-    ctx.fillStyle = '#555';
-    ctx.font = '14px monospace';
-    ctx.fillText('\u2190 \u2192 or A/D to move', canvas.width / 2, canvas.height / 2 + 130);
-    ctx.fillText('Press H for High Scores', canvas.width / 2, canvas.height / 2 + 155);
-
-    ctx.restore();
-}
-
-function drawGameOverScreen(): void {
-    // Dark overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // "GAME OVER" with red glow
-    ctx.shadowColor = '#ff1744';
-    ctx.shadowBlur = 30;
-    ctx.fillStyle = '#ff1744';
-    ctx.font = 'bold 64px monospace';
-    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 50);
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 64px monospace';
-    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 50);
-
-    // Final score
-    ctx.fillStyle = '#aaa';
-    ctx.font = '24px monospace';
-    ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
-
-    // Restart prompt (blinking)
-    if (Math.floor(Date.now() / 600) % 2 === 0) {
-        ctx.fillStyle = '#ffea00';
-        ctx.font = '22px monospace';
-        const prompt = score > 0 && isHighScore(score) ? 'Press Space to Enter High Score' : 'Press Space to Restart';
-        ctx.fillText(prompt, canvas.width / 2, canvas.height / 2 + 80);
-    }
-
-    ctx.restore();
-}
-
-function drawWinScreen(): void {
-    // Dark overlay
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // "YOU WIN!" with green glow
-    ctx.shadowColor = '#00e676';
-    ctx.shadowBlur = 30;
-    ctx.fillStyle = '#00e676';
-    ctx.font = 'bold 64px monospace';
-    ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 50);
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 64px monospace';
-    ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 50);
-
-    // Final score
-    ctx.fillStyle = '#aaa';
-    ctx.font = '24px monospace';
-    ctx.fillText(`Final Score: ${score}`, canvas.width / 2, canvas.height / 2 + 10);
-
-    // Play again prompt (blinking)
-    if (Math.floor(Date.now() / 600) % 2 === 0) {
-        ctx.fillStyle = '#ffea00';
-        ctx.font = '22px monospace';
-        const prompt = score > 0 && isHighScore(score) ? 'Press Space to Enter High Score' : 'Press Space to Play Again';
-        ctx.fillText(prompt, canvas.width / 2, canvas.height / 2 + 80);
-    }
-
-    ctx.restore();
-}
-
-function drawHighScoreEntryScreen(): void {
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-
-    // Title
-    ctx.shadowColor = '#ffea00';
-    ctx.shadowBlur = 20;
-    ctx.fillStyle = '#ffea00';
-    ctx.font = 'bold 48px monospace';
-    ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 - 100);
-
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 48px monospace';
-    ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 - 100);
-
-    // Score
-    ctx.fillStyle = '#aaa';
-    ctx.font = '24px monospace';
-    ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2 - 40);
-
-    // Prompt
-    ctx.fillStyle = '#888';
-    ctx.font = '20px monospace';
-    ctx.fillText('Enter your initials:', canvas.width / 2, canvas.height / 2 + 10);
-
-    // Initials display (3 boxes)
-    const boxSize = 50;
-    const boxGap = 15;
-    const totalWidth = 3 * boxSize + 2 * boxGap;
-    const startX = (canvas.width - totalWidth) / 2;
-    const boxY = canvas.height / 2 + 40;
-
-    for (let i = 0; i < 3; i++) {
-        const bx = startX + i * (boxSize + boxGap);
-        // Box
-        ctx.strokeStyle = i === initialsBuffer.length ? '#00e5ff' : '#444';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(bx, boxY, boxSize, boxSize);
-
-        // Letter
-        if (i < initialsBuffer.length) {
-            ctx.fillStyle = '#fff';
-            ctx.font = 'bold 32px monospace';
-            ctx.fillText(initialsBuffer[i]!, bx + boxSize / 2, boxY + boxSize / 2);
-        } else if (i === initialsBuffer.length) {
-            // Blinking cursor
-            if (Math.floor(Date.now() / 400) % 2 === 0) {
-                ctx.fillStyle = '#00e5ff';
-                ctx.font = 'bold 32px monospace';
-                ctx.fillText('_', bx + boxSize / 2, boxY + boxSize / 2);
-            }
+            case GameState.HIGH_SCORES:
+                this._drawHighScoresScreen();
+                break;
         }
     }
 
-    // Hint
-    ctx.fillStyle = '#555';
-    ctx.font = '14px monospace';
-    ctx.fillText('Press Enter to confirm', canvas.width / 2, boxY + boxSize + 35);
+    // --- Drawing ---
+    _drawBall(): void {
+        const { ctx, ball } = this;
+        ctx.beginPath();
+        ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
+        ctx.fillStyle = ball.color;
+        ctx.fill();
+        ctx.closePath();
+    }
 
-    ctx.restore();
-}
+    _drawPaddle(): void {
+        const { ctx, paddle } = this;
+        ctx.fillStyle = paddle.color;
+        ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
 
-function drawHighScoresScreen(): void {
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+        // Paddle glow effect
+        ctx.shadowColor = paddle.color;
+        ctx.shadowBlur = 10;
+        ctx.fillRect(paddle.x, paddle.y, paddle.width, paddle.height);
+        ctx.shadowBlur = 0;
+    }
 
-    ctx.save();
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    _drawBricks(): void {
+        const { ctx } = this;
+        for (const brick of this.bricks) {
+            if (!brick.alive) continue;
+            ctx.fillStyle = brick.color;
+            ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+        }
+    }
 
-    // Title
-    ctx.shadowColor = '#2979ff';
-    ctx.shadowBlur = 20;
-    ctx.fillStyle = '#2979ff';
-    ctx.font = 'bold 48px monospace';
-    ctx.fillText('HIGH SCORES', canvas.width / 2, 60);
+    _drawHUD(): void {
+        const { ctx, canvas } = this;
+        ctx.fillStyle = '#aaa';
+        ctx.font = '16px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`Score: ${this.score}`, 15, 30);
+        ctx.textAlign = 'right';
+        ctx.fillText(`Lives: ${this.lives}`, canvas.width - 15, 30);
 
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = '#fff';
-    ctx.font = 'bold 48px monospace';
-    ctx.fillText('HIGH SCORES', canvas.width / 2, 60);
-
-    const scores = loadHighScores();
-    const tableTop = 120;
-    const rowHeight = 38;
-
-    // Header
-    ctx.fillStyle = '#666';
-    ctx.font = '16px monospace';
-    ctx.textAlign = 'center';
-    ctx.fillText('RANK', canvas.width / 2 - 200, tableTop);
-    ctx.fillText('NAME', canvas.width / 2 - 80, tableTop);
-    ctx.fillText('SCORE', canvas.width / 2 + 60, tableTop);
-    ctx.fillText('DATE', canvas.width / 2 + 190, tableTop);
-
-    // Divider
-    ctx.strokeStyle = '#333';
-    ctx.lineWidth = 1;
-    ctx.beginPath();
-    ctx.moveTo(canvas.width / 2 - 270, tableTop + 15);
-    ctx.lineTo(canvas.width / 2 + 270, tableTop + 15);
-    ctx.stroke();
-
-    if (scores.length === 0) {
-        ctx.fillStyle = '#555';
-        ctx.font = '20px monospace';
-        ctx.textAlign = 'center';
-        ctx.fillText('No scores yet. Go play!', canvas.width / 2, tableTop + 80);
-    } else {
-        for (let i = 0; i < scores.length; i++) {
-            const entry = scores[i]!;
-            const y = tableTop + 35 + i * rowHeight;
-            const isNew = highScoreJustEntered && i === scores.findIndex(s => s.score === score);
-
-            ctx.fillStyle = isNew ? '#ffea00' : (i < 3 ? '#fff' : '#aaa');
-            ctx.font = i < 3 ? 'bold 18px monospace' : '18px monospace';
-
+        // Launch hint
+        if (!this.ballLaunched && Math.floor(Date.now() / 600) % 2 === 0) {
             ctx.textAlign = 'center';
-            ctx.fillText(`${i + 1}.`, canvas.width / 2 - 200, y);
-            ctx.fillText(entry.initials, canvas.width / 2 - 80, y);
-            ctx.fillText(String(entry.score), canvas.width / 2 + 60, y);
-            ctx.fillText(entry.date, canvas.width / 2 + 190, y);
+            ctx.fillStyle = '#ffea00';
+            ctx.font = '18px monospace';
+            ctx.fillText('Press Space or Click to Launch', canvas.width / 2, canvas.height / 2);
         }
     }
 
-    // Footer
-    const footerY = canvas.height - 40;
-    if (Math.floor(Date.now() / 600) % 2 === 0) {
-        ctx.fillStyle = '#ffea00';
-        ctx.font = '20px monospace';
+    _drawPauseOverlay(): void {
+        const { ctx, canvas } = this;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
         ctx.textAlign = 'center';
-        ctx.fillText(highScoreJustEntered ? 'Press Space to Play Again' : 'Press Escape to go back', canvas.width / 2, footerY);
+        ctx.textBaseline = 'middle';
+
+        ctx.shadowColor = '#00e5ff';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = 'bold 56px monospace';
+        ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2 - 20);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 56px monospace';
+        ctx.fillText('PAUSED', canvas.width / 2, canvas.height / 2 - 20);
+
+        if (Math.floor(Date.now() / 600) % 2 === 0) {
+            ctx.fillStyle = '#ffea00';
+            ctx.font = '20px monospace';
+            ctx.fillText('Press Escape to Resume', canvas.width / 2, canvas.height / 2 + 40);
+        }
+
+        ctx.restore();
     }
 
-    ctx.restore();
-}
+    // --- Screen Rendering ---
+    _drawStartScreen(): void {
+        const { ctx, canvas } = this;
 
-// --- Game Loop ---
-function draw(): void {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-    // Background
-    ctx.fillStyle = '#111';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
 
-    switch (state) {
-        case GameState.START:
-            drawStartScreen();
-            break;
+        // Glow layers
+        ctx.shadowColor = '#00e5ff';
+        ctx.shadowBlur = 30;
+        ctx.fillStyle = '#00e5ff';
+        ctx.font = 'bold 72px monospace';
+        ctx.fillText('BREAKOUT', canvas.width / 2, canvas.height / 2 - 60);
 
-        case GameState.PLAYING:
-            update();
-            drawBricks();
-            drawPaddle();
-            drawBall();
-            drawHUD();
-            break;
+        // Solid title on top
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 72px monospace';
+        ctx.fillText('BREAKOUT', canvas.width / 2, canvas.height / 2 - 60);
 
-        case GameState.GAME_OVER:
-            drawBricks();
-            drawPaddle();
-            drawGameOverScreen();
-            break;
+        // Subtitle
+        ctx.fillStyle = '#888';
+        ctx.font = '18px monospace';
+        ctx.fillText('A Classic Arcade Game', canvas.width / 2, canvas.height / 2);
 
-        case GameState.WIN:
-            drawWinScreen();
-            break;
+        // Blinking prompt
+        if (Math.floor(Date.now() / 600) % 2 === 0) {
+            ctx.fillStyle = '#ffea00';
+            ctx.font = '22px monospace';
+            ctx.fillText('Press Space to Start', canvas.width / 2, canvas.height / 2 + 80);
+        }
 
-        case GameState.HIGH_SCORE_ENTRY:
-            drawHighScoreEntryScreen();
-            break;
+        // Controls hint
+        ctx.fillStyle = '#555';
+        ctx.font = '14px monospace';
+        ctx.fillText('\u2190 \u2192 or A/D to move  |  Esc to pause', canvas.width / 2, canvas.height / 2 + 130);
+        ctx.fillText('Press H for High Scores', canvas.width / 2, canvas.height / 2 + 155);
 
-        case GameState.HIGH_SCORES:
-            drawHighScoresScreen();
-            break;
+        ctx.restore();
     }
 
-    requestAnimationFrame(draw);
+    _drawGameOverScreen(): void {
+        const { ctx, canvas } = this;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        ctx.shadowColor = '#ff1744';
+        ctx.shadowBlur = 30;
+        ctx.fillStyle = '#ff1744';
+        ctx.font = 'bold 64px monospace';
+        ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 50);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 64px monospace';
+        ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 50);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '24px monospace';
+        ctx.fillText(`Final Score: ${this.score}`, canvas.width / 2, canvas.height / 2 + 10);
+
+        if (Math.floor(Date.now() / 600) % 2 === 0) {
+            ctx.fillStyle = '#ffea00';
+            ctx.font = '22px monospace';
+            const prompt = this.score > 0 && isHighScore(this.score) ? 'Press Space to Enter High Score' : 'Press Space to Restart';
+            ctx.fillText(prompt, canvas.width / 2, canvas.height / 2 + 80);
+        }
+
+        ctx.restore();
+    }
+
+    _drawWinScreen(): void {
+        const { ctx, canvas } = this;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        ctx.shadowColor = '#00e676';
+        ctx.shadowBlur = 30;
+        ctx.fillStyle = '#00e676';
+        ctx.font = 'bold 64px monospace';
+        ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 50);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 64px monospace';
+        ctx.fillText('YOU WIN!', canvas.width / 2, canvas.height / 2 - 50);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '24px monospace';
+        ctx.fillText(`Final Score: ${this.score}`, canvas.width / 2, canvas.height / 2 + 10);
+
+        if (Math.floor(Date.now() / 600) % 2 === 0) {
+            ctx.fillStyle = '#ffea00';
+            ctx.font = '22px monospace';
+            const prompt = this.score > 0 && isHighScore(this.score) ? 'Press Space to Enter High Score' : 'Press Space to Play Again';
+            ctx.fillText(prompt, canvas.width / 2, canvas.height / 2 + 80);
+        }
+
+        ctx.restore();
+    }
+
+    _drawHighScoreEntryScreen(): void {
+        const { ctx, canvas } = this;
+
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.9)';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        ctx.shadowColor = '#ffea00';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#ffea00';
+        ctx.font = 'bold 48px monospace';
+        ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 - 100);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 48px monospace';
+        ctx.fillText('NEW HIGH SCORE!', canvas.width / 2, canvas.height / 2 - 100);
+
+        ctx.fillStyle = '#aaa';
+        ctx.font = '24px monospace';
+        ctx.fillText(`Score: ${this.score}`, canvas.width / 2, canvas.height / 2 - 40);
+
+        ctx.fillStyle = '#888';
+        ctx.font = '20px monospace';
+        ctx.fillText('Enter your initials:', canvas.width / 2, canvas.height / 2 + 10);
+
+        const boxSize = 50;
+        const boxGap = 15;
+        const totalWidth = 3 * boxSize + 2 * boxGap;
+        const startX = (canvas.width - totalWidth) / 2;
+        const boxY = canvas.height / 2 + 40;
+
+        for (let i = 0; i < 3; i++) {
+            const bx = startX + i * (boxSize + boxGap);
+            ctx.strokeStyle = i === this.initialsBuffer.length ? '#00e5ff' : '#444';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(bx, boxY, boxSize, boxSize);
+
+            if (i < this.initialsBuffer.length) {
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 32px monospace';
+                ctx.fillText(this.initialsBuffer[i]!, bx + boxSize / 2, boxY + boxSize / 2);
+            } else if (i === this.initialsBuffer.length) {
+                if (Math.floor(Date.now() / 400) % 2 === 0) {
+                    ctx.fillStyle = '#00e5ff';
+                    ctx.font = 'bold 32px monospace';
+                    ctx.fillText('_', bx + boxSize / 2, boxY + boxSize / 2);
+                }
+            }
+        }
+
+        ctx.fillStyle = '#555';
+        ctx.font = '14px monospace';
+        ctx.fillText('Press Enter to confirm', canvas.width / 2, boxY + boxSize + 35);
+
+        ctx.restore();
+    }
+
+    _drawHighScoresScreen(): void {
+        const { ctx, canvas } = this;
+
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        ctx.shadowColor = '#2979ff';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#2979ff';
+        ctx.font = 'bold 48px monospace';
+        ctx.fillText('HIGH SCORES', canvas.width / 2, 60);
+
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 48px monospace';
+        ctx.fillText('HIGH SCORES', canvas.width / 2, 60);
+
+        const scores = loadHighScores();
+        const tableTop = 120;
+        const rowHeight = 38;
+
+        ctx.fillStyle = '#666';
+        ctx.font = '16px monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('RANK', canvas.width / 2 - 200, tableTop);
+        ctx.fillText('NAME', canvas.width / 2 - 80, tableTop);
+        ctx.fillText('SCORE', canvas.width / 2 + 60, tableTop);
+        ctx.fillText('DATE', canvas.width / 2 + 190, tableTop);
+
+        ctx.strokeStyle = '#333';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(canvas.width / 2 - 270, tableTop + 15);
+        ctx.lineTo(canvas.width / 2 + 270, tableTop + 15);
+        ctx.stroke();
+
+        if (scores.length === 0) {
+            ctx.fillStyle = '#555';
+            ctx.font = '20px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText('No scores yet. Go play!', canvas.width / 2, tableTop + 80);
+        } else {
+            for (let i = 0; i < scores.length; i++) {
+                const entry = scores[i]!;
+                const y = tableTop + 35 + i * rowHeight;
+                const isNew = this.highScoreJustEntered && i === scores.findIndex(s => s.score === this.score);
+
+                ctx.fillStyle = isNew ? '#ffea00' : (i < 3 ? '#fff' : '#aaa');
+                ctx.font = i < 3 ? 'bold 18px monospace' : '18px monospace';
+
+                ctx.textAlign = 'center';
+                ctx.fillText(`${i + 1}.`, canvas.width / 2 - 200, y);
+                ctx.fillText(entry.initials, canvas.width / 2 - 80, y);
+                ctx.fillText(String(entry.score), canvas.width / 2 + 60, y);
+                ctx.fillText(entry.date, canvas.width / 2 + 190, y);
+            }
+        }
+
+        const footerY = canvas.height - 40;
+        if (Math.floor(Date.now() / 600) % 2 === 0) {
+            ctx.fillStyle = '#ffea00';
+            ctx.font = '20px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(this.highScoreJustEntered ? 'Press Space to Play Again' : 'Press Escape to go back', canvas.width / 2, footerY);
+        }
+
+        ctx.restore();
+    }
 }
 
 // --- Bootstrap ---
-resetGame();
-draw();
+new Game('gameCanvas');
