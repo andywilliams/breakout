@@ -303,8 +303,22 @@ function update() {
             ball.y - ball.radius < brick.y + brick.height
         ) {
             brick.alive = false;
-            ball.dy = -ball.dy;
             score += 10;
+
+            // Determine which side was hit using overlap comparison
+            const overlapLeft = ball.x + ball.radius - brick.x;
+            const overlapRight = brick.x + brick.width - (ball.x - ball.radius);
+            const overlapTop = ball.y + ball.radius - brick.y;
+            const overlapBottom = brick.y + brick.height - (ball.y - ball.radius);
+
+            const minOverlapX = Math.min(overlapLeft, overlapRight);
+            const minOverlapY = Math.min(overlapTop, overlapBottom);
+
+            if (minOverlapX < minOverlapY) {
+                ball.dx = -ball.dx; // Side hit
+            } else {
+                ball.dy = -ball.dy; // Top/bottom hit
+            }
         }
     }
 
