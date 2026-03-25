@@ -69,6 +69,19 @@ const brickConfig = {
     offsetLeft: 35,
 };
 
+const BrickType = {
+    STANDARD: 'standard',
+    MULTI2: 'multi2',     // 2 hits to destroy
+    MULTI3: 'multi3',     // 3 hits to destroy
+    INDESTRUCTIBLE: 'indestructible',
+    EXPLOSIVE: 'explosive', // destroys adjacent bricks on break
+} as const;
+
+type BrickTypeValue = (typeof BrickType)[keyof typeof BrickType];
+
+/** Cell value in a row pattern: false = empty, true = standard brick, or a BrickType string */
+type BrickCell = boolean | BrickTypeValue;
+
 interface Brick {
     x: number;
     y: number;
@@ -77,14 +90,16 @@ interface Brick {
     color: string;
     points: number;
     alive: boolean;
+    type: BrickTypeValue;
+    hitsLeft: number; // for multi-hit bricks
 }
 
 // --- Level System ---
 interface BrickRowConfig {
     color: string;
     points: number;
-    /** Which columns have bricks (true = brick present). Length must equal cols. */
-    pattern: boolean[];
+    /** Which columns have bricks. true = standard, false = empty, or a BrickType string. */
+    pattern: BrickCell[];
 }
 
 interface LevelConfig {
@@ -96,50 +111,143 @@ interface LevelConfig {
     paddleWidth: number;
 }
 
+// Shorthand aliases for level patterns
+const S = BrickType.STANDARD;
+const M2 = BrickType.MULTI2;
+const M3 = BrickType.MULTI3;
+const I = BrickType.INDESTRUCTIBLE;
+const E = BrickType.EXPLOSIVE;
+const _ = false;
+
 const LEVELS: LevelConfig[] = [
+    // Level 1 — Classic: Simple introduction, all standard bricks
     {
         level: 1,
         name: 'Classic',
         cols: 10,
         rows: [
-            { color: '#ff1744', points: 50, pattern: Array(10).fill(true) },
-            { color: '#ff9100', points: 40, pattern: Array(10).fill(true) },
-            { color: '#ffea00', points: 30, pattern: Array(10).fill(true) },
-            { color: '#00e676', points: 20, pattern: Array(10).fill(true) },
-            { color: '#2979ff', points: 10, pattern: Array(10).fill(true) },
+            { color: '#ff1744', points: 50, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#ff9100', points: 40, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#ffea00', points: 30, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#00e676', points: 20, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#2979ff', points: 10, pattern: [true, true, true, true, true, true, true, true, true, true] },
         ],
         ballSpeed: 4,
         paddleWidth: 100,
     },
+    // Level 2 — Diamond: Introduces gaps, shaped layout
     {
         level: 2,
+        name: 'Diamond',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 50, pattern: [_, _, _, _, S, S, _, _, _, _] },
+            { color: '#ff9100', points: 40, pattern: [_, _, _, S, S, S, S, _, _, _] },
+            { color: '#ffea00', points: 30, pattern: [_, _, S, S, S, S, S, S, _, _] },
+            { color: '#00e676', points: 25, pattern: [_, S, S, S, S, S, S, S, S, _] },
+            { color: '#2979ff', points: 20, pattern: [_, _, S, S, S, S, S, S, _, _] },
+            { color: '#e040fb', points: 15, pattern: [_, _, _, S, S, S, S, _, _, _] },
+            { color: '#00bcd4', points: 10, pattern: [_, _, _, _, S, S, _, _, _, _] },
+        ],
+        ballSpeed: 4,
+        paddleWidth: 100,
+    },
+    // Level 3 — Armor Up: Introduces multi-hit bricks
+    {
+        level: 3,
+        name: 'Armor Up',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 60, pattern: [M2, _, M2, _, M2, M2, _, M2, _, M2] },
+            { color: '#ff9100', points: 40, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#ffea00', points: 30, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#00e676', points: 20, pattern: [S,  _,  S,  _,  S,  S,  _,  S,  _,  S ] },
+            { color: '#2979ff', points: 10, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+        ],
+        ballSpeed: 4.2,
+        paddleWidth: 95,
+    },
+    // Level 4 — Fortress: Indestructible walls create corridors
+    {
+        level: 4,
         name: 'Fortress',
         cols: 10,
         rows: [
-            { color: '#ff1744', points: 60, pattern: [false, true, true, true, true, true, true, true, true, false] },
-            { color: '#ff9100', points: 50, pattern: [true, false, true, true, true, true, true, true, false, true] },
-            { color: '#ffea00', points: 40, pattern: [true, true, false, true, true, true, true, false, true, true] },
-            { color: '#00e676', points: 30, pattern: [true, true, true, false, true, true, false, true, true, true] },
-            { color: '#2979ff', points: 20, pattern: [true, true, true, true, false, false, true, true, true, true] },
-            { color: '#e040fb', points: 10, pattern: Array(10).fill(true) },
+            { color: '#ff1744', points: 50, pattern: [S,  S,  S,  I,  _,  _,  I,  S,  S,  S ] },
+            { color: '#ff9100', points: 40, pattern: [S,  S,  S,  I,  _,  _,  I,  S,  S,  S ] },
+            { color: '#ffea00', points: 35, pattern: [_,  _,  _,  I,  S,  S,  I,  _,  _,  _ ] },
+            { color: '#00e676', points: 30, pattern: [S,  S,  S,  I,  S,  S,  I,  S,  S,  S ] },
+            { color: '#2979ff', points: 25, pattern: [S,  S,  S,  _,  _,  _,  _,  S,  S,  S ] },
+            { color: '#e040fb', points: 20, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
         ],
         ballSpeed: 4.5,
         paddleWidth: 90,
     },
+    // Level 5 — Demolition: Explosive bricks for chain reactions
     {
-        level: 3,
-        name: 'Gauntlet',
+        level: 5,
+        name: 'Demolition',
         cols: 10,
         rows: [
-            { color: '#ff1744', points: 70, pattern: [true, false, true, false, true, true, false, true, false, true] },
-            { color: '#ff9100', points: 60, pattern: [false, true, false, true, false, false, true, false, true, false] },
-            { color: '#ffea00', points: 50, pattern: [true, false, true, false, true, true, false, true, false, true] },
-            { color: '#00e676', points: 40, pattern: [false, true, false, true, false, false, true, false, true, false] },
-            { color: '#2979ff', points: 30, pattern: [true, true, true, true, true, true, true, true, true, true] },
-            { color: '#e040fb', points: 20, pattern: [true, true, true, true, true, true, true, true, true, true] },
-            { color: '#00bcd4', points: 10, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#ff1744', points: 50, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#ff9100', points: 40, pattern: [S,  _,  S,  E,  S,  S,  E,  S,  _,  S ] },
+            { color: '#ffea00', points: 30, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#00e676', points: 25, pattern: [S,  E,  S,  _,  S,  S,  _,  S,  E,  S ] },
+            { color: '#2979ff', points: 20, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#e040fb', points: 15, pattern: [_,  _,  S,  E,  S,  S,  E,  S,  _,  _ ] },
+        ],
+        ballSpeed: 4.5,
+        paddleWidth: 90,
+    },
+    // Level 6 — Iron Curtain: Heavy multi-hit layer protecting standard bricks
+    {
+        level: 6,
+        name: 'Iron Curtain',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 70, pattern: [M3, M3, M3, M3, M3, M3, M3, M3, M3, M3] },
+            { color: '#ff9100', points: 50, pattern: [M2, _, M2, _, M2, M2, _, M2, _, M2] },
+            { color: '#ffea00', points: 35, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#00e676', points: 25, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+            { color: '#2979ff', points: 20, pattern: [S,  _,  S,  S,  _,  _,  S,  S,  _,  S ] },
+            { color: '#e040fb', points: 15, pattern: [E,  _,  _,  S,  S,  S,  S,  _,  _,  E ] },
+        ],
+        ballSpeed: 4.8,
+        paddleWidth: 85,
+    },
+    // Level 7 — Labyrinth: Indestructible maze with hidden explosive shortcuts
+    {
+        level: 7,
+        name: 'Labyrinth',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 60, pattern: [S,  S,  I,  S,  S,  S,  S,  I,  S,  S ] },
+            { color: '#ff9100', points: 50, pattern: [I,  _,  I,  _,  M2, M2, _,  I,  _,  I ] },
+            { color: '#ffea00', points: 40, pattern: [I,  S,  _,  S,  I,  I,  S,  _,  S,  I ] },
+            { color: '#00e676', points: 35, pattern: [_,  S,  I,  S,  _,  _,  S,  I,  S,  _ ] },
+            { color: '#2979ff', points: 30, pattern: [S,  E,  _,  S,  S,  S,  S,  _,  E,  S ] },
+            { color: '#e040fb', points: 25, pattern: [S,  S,  I,  M2, S,  S,  M2, I,  S,  S ] },
+            { color: '#00bcd4', points: 20, pattern: [S,  S,  S,  S,  _,  _,  S,  S,  S,  S ] },
         ],
         ballSpeed: 5,
+        paddleWidth: 85,
+    },
+    // Level 8 — Endgame: Everything combined, maximum difficulty
+    {
+        level: 8,
+        name: 'Endgame',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 80, pattern: [M3, I,  M3, E,  M3, M3, E,  M3, I,  M3] },
+            { color: '#ff9100', points: 60, pattern: [I,  S,  S,  S,  I,  I,  S,  S,  S,  I ] },
+            { color: '#ffea00', points: 50, pattern: [M2, S,  M2, S,  M2, M2, S,  M2, S,  M2] },
+            { color: '#00e676', points: 40, pattern: [S,  E,  S,  S,  S,  S,  S,  S,  E,  S ] },
+            { color: '#2979ff', points: 35, pattern: [I,  S,  S,  I,  _,  _,  I,  S,  S,  I ] },
+            { color: '#e040fb', points: 30, pattern: [M2, S,  S,  S,  S,  S,  S,  S,  S,  M2] },
+            { color: '#00bcd4', points: 25, pattern: [S,  S,  E,  S,  M3, M3, S,  E,  S,  S ] },
+            { color: '#ff1744', points: 20, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
+        ],
+        ballSpeed: 5.5,
         paddleWidth: 80,
     },
 ];
@@ -482,15 +590,37 @@ class Game {
         for (let row = 0; row < level.rows.length; row++) {
             const rowConfig = level.rows[row]!;
             for (let col = 0; col < level.cols; col++) {
-                if (!rowConfig.pattern[col]) continue;
+                const cell = rowConfig.pattern[col];
+                if (!cell) continue;
+
+                const brickType: BrickTypeValue = cell === true ? BrickType.STANDARD : cell;
+                let color = rowConfig.color;
+                let hitsLeft = 1;
+
+                if (brickType === BrickType.MULTI2) {
+                    color = '#b0bec5'; // silver
+                    hitsLeft = 2;
+                } else if (brickType === BrickType.MULTI3) {
+                    color = '#ffd54f'; // gold
+                    hitsLeft = 3;
+                } else if (brickType === BrickType.INDESTRUCTIBLE) {
+                    color = '#616161'; // dark grey
+                    hitsLeft = Infinity;
+                } else if (brickType === BrickType.EXPLOSIVE) {
+                    color = '#ff6d00'; // bright orange
+                    hitsLeft = 1;
+                }
+
                 this.bricks.push({
                     x: brickConfig.offsetLeft + col * (brickConfig.width + brickConfig.padding),
                     y: brickConfig.offsetTop + row * (brickConfig.height + brickConfig.padding),
                     width: brickConfig.width,
                     height: brickConfig.height,
-                    color: rowConfig.color,
+                    color,
                     points: rowConfig.points,
                     alive: true,
+                    type: brickType,
+                    hitsLeft,
                 });
             }
         }
@@ -718,6 +848,44 @@ class Game {
         );
     }
 
+    _hitBrick(brick: Brick): void {
+        if (brick.type === BrickType.INDESTRUCTIBLE) return;
+
+        brick.hitsLeft--;
+        if (brick.hitsLeft <= 0) {
+            brick.alive = false;
+            this.score += brick.points;
+            this._trySpawnPowerUp(brick);
+
+            if (brick.type === BrickType.EXPLOSIVE) {
+                this._explodeNeighbors(brick);
+            }
+        } else {
+            // Multi-hit: darken color to show damage
+            if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 2) {
+                brick.color = '#ffb300'; // darker gold
+            } else if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 1) {
+                brick.color = '#ff8f00'; // even darker
+            } else if (brick.type === BrickType.MULTI2 && brick.hitsLeft === 1) {
+                brick.color = '#78909c'; // darker silver
+            }
+        }
+    }
+
+    _explodeNeighbors(source: Brick): void {
+        const range = brickConfig.width + brickConfig.padding + 4; // slightly more than one brick span
+        for (const brick of this.bricks) {
+            if (!brick.alive || brick === source) continue;
+            if (brick.type === BrickType.INDESTRUCTIBLE) continue;
+            const dx = (brick.x + brick.width / 2) - (source.x + source.width / 2);
+            const dy = (brick.y + brick.height / 2) - (source.y + source.height / 2);
+            if (Math.abs(dx) <= range && Math.abs(dy) <= range) {
+                brick.alive = false;
+                this.score += brick.points;
+            }
+        }
+    }
+
     _processBallBrickCollisions(b: Ball): void {
         for (const brick of this.bricks) {
             if (!brick.alive) continue;
@@ -728,9 +896,7 @@ class Game {
                 b.y + b.radius > brick.y &&
                 b.y - b.radius < brick.y + brick.height
             ) {
-                brick.alive = false;
-                this.score += brick.points;
-                this._trySpawnPowerUp(brick);
+                this._hitBrick(brick);
 
                 const overlapLeft = b.x + b.radius - brick.x;
                 const overlapRight = brick.x + brick.width - (b.x - b.radius);
@@ -826,9 +992,7 @@ class Game {
                     laser.y + laser.height > brick.y &&
                     laser.y < brick.y + brick.height
                 ) {
-                    brick.alive = false;
-                    this.score += brick.points;
-                    this._trySpawnPowerUp(brick);
+                    this._hitBrick(brick);
                     hit = true;
                     break;
                 }
@@ -892,7 +1056,7 @@ class Game {
                     this._expireEffect();
                 }
             }
-            if (this.bricks.every((b) => !b.alive)) {
+            if (this.bricks.every((b) => !b.alive || b.type === BrickType.INDESTRUCTIBLE)) {
                 this._advanceLevel();
             }
             return;
@@ -982,7 +1146,7 @@ class Game {
         }
 
         // Level clear — advance or win
-        if (this.bricks.every((b) => !b.alive)) {
+        if (this.bricks.every((b) => !b.alive || b.type === BrickType.INDESTRUCTIBLE)) {
             this._advanceLevel();
         }
     }
@@ -1078,6 +1242,41 @@ class Game {
             if (!brick.alive) continue;
             ctx.fillStyle = brick.color;
             ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+
+            if (brick.type === BrickType.INDESTRUCTIBLE) {
+                // Cross-hatch pattern
+                ctx.strokeStyle = '#424242';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                for (let i = 0; i < brick.width; i += 8) {
+                    ctx.moveTo(brick.x + i, brick.y);
+                    ctx.lineTo(brick.x + i, brick.y + brick.height);
+                }
+                ctx.stroke();
+                // Border
+                ctx.strokeStyle = '#9e9e9e';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(brick.x, brick.y, brick.width, brick.height);
+            } else if (brick.type === BrickType.MULTI2 || brick.type === BrickType.MULTI3) {
+                // Hit indicator dots
+                ctx.fillStyle = '#fff';
+                const dotR = 2;
+                const cx = brick.x + brick.width / 2;
+                const cy = brick.y + brick.height / 2;
+                for (let i = 0; i < brick.hitsLeft; i++) {
+                    const offset = (i - (brick.hitsLeft - 1) / 2) * 8;
+                    ctx.beginPath();
+                    ctx.arc(cx + offset, cy, dotR, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            } else if (brick.type === BrickType.EXPLOSIVE) {
+                // Explosion icon — small star/asterisk
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 12px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('✦', brick.x + brick.width / 2, brick.y + brick.height / 2);
+            }
         }
     }
 
