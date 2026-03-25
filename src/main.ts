@@ -147,6 +147,8 @@ const LEVELS: LevelConfig[] = [
 // --- Power-Up System ---
 const PowerUpType = {
     WIDE_PADDLE: 'widePaddle',
+    STICKY_PADDLE: 'stickyPaddle',
+    LASER_PADDLE: 'laserPaddle',
 } as const;
 
 type PowerUpTypeValue = (typeof PowerUpType)[keyof typeof PowerUpType];
@@ -168,6 +170,21 @@ interface ActiveEffect {
     duration: number;  // total ms duration
 }
 
+interface Laser {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    dy: number;
+}
+
+const LASER_CONFIG = {
+    width: 4,
+    height: 12,
+    speed: 6,
+    cooldown: 250, // ms between shots
+};
+
 const POWER_UP_CONFIG = {
     dropChance: 0.2,       // 20% chance per brick
     fallSpeed: 2,          // pixels per dt unit
@@ -178,6 +195,8 @@ const POWER_UP_CONFIG = {
 
 const POWER_UP_DEFS: Record<PowerUpTypeValue, { color: string; label: string }> = {
     [PowerUpType.WIDE_PADDLE]: { color: '#00e676', label: 'W' },
+    [PowerUpType.STICKY_PADDLE]: { color: '#e040fb', label: 'S' },
+    [PowerUpType.LASER_PADDLE]: { color: '#ff1744', label: 'L' },
 };
 
 // Target frame duration for delta time normalization (60 fps)
@@ -220,6 +239,9 @@ class Game {
     keys: Record<string, boolean>;
     powerUps: PowerUp[];
     activeEffect: ActiveEffect | null;
+    lasers: Laser[];
+    lastLaserTime: number;
+    stickyBallOffset: number | null; // offset from paddle.x when ball is stuck
 
     lastTime: number;
     animFrameId: number | null;
@@ -267,6 +289,9 @@ class Game {
         this.keys = {};
         this.powerUps = [];
         this.activeEffect = null;
+        this.lasers = [];
+        this.lastLaserTime = 0;
+        this.stickyBallOffset = null;
 
         // Delta time tracking
         this.lastTime = 0;
@@ -278,6 +303,8 @@ class Game {
         this._onClick = () => {
             if (this.state === GameState.PLAYING && !this.ballLaunched) {
                 this.launchBall();
+            } else if (this.state === GameState.PLAYING && this.stickyBallOffset !== null) {
+                this._releaseStickyBall();
             }
         };
         this._onMouseMove = (e: MouseEvent) => {
@@ -339,8 +366,12 @@ class Game {
 
         if (e.key === ' ' || e.code === 'Space') {
             e.preventDefault();
-            if (this.state === GameState.PLAYING && !this.ballLaunched) {
+            if (this.state === GameState.PLAYING && this.stickyBallOffset !== null) {
+                this._releaseStickyBall();
+            } else if (this.state === GameState.PLAYING && !this.ballLaunched) {
                 this.launchBall();
+            } else if (this.state === GameState.PLAYING && this.activeEffect?.type === PowerUpType.LASER_PADDLE) {
+                this._fireLaser();
             } else if (this.state === GameState.MENU) {
                 this.startPlaying();
             } else if (this.state === GameState.GAME_OVER || this.state === GameState.WIN) {
@@ -418,6 +449,7 @@ class Game {
         this.paddle.y = this.canvas.height - 40;
 
         this.ballLaunched = false;
+        this.stickyBallOffset = null;
         this.ball.x = this.paddle.x + this.paddle.width / 2;
         this.ball.y = this.paddle.y - this.ball.radius - 2;
         this.ball.dx = 0;
@@ -457,6 +489,7 @@ class Game {
         this.lives = 3;
         this.currentLevel = 0;
         this.powerUps = [];
+        this.lasers = [];
         if (this.activeEffect) this._expireEffect();
         this._applyLevelConfig();
         this.createBricks();
@@ -472,6 +505,8 @@ class Game {
     _advanceLevel(): void {
         this.currentLevel++;
         this.powerUps = [];
+        this.lasers = [];
+        this.stickyBallOffset = null;
         if (this.activeEffect) this._expireEffect();
         if (this.currentLevel >= LEVELS.length) {
             this.state = GameState.WIN;
@@ -542,10 +577,21 @@ class Game {
             case PowerUpType.WIDE_PADDLE: {
                 const level = LEVELS[this.currentLevel]!;
                 this.paddle.width = level.paddleWidth * 1.5;
+                this.paddle.color = '#00e676';
                 // Re-center paddle if it would go off screen
                 if (this.paddle.x + this.paddle.width > this.canvas.width) {
                     this.paddle.x = this.canvas.width - this.paddle.width;
                 }
+                break;
+            }
+            case PowerUpType.STICKY_PADDLE: {
+                this.paddle.color = '#e040fb';
+                break;
+            }
+            case PowerUpType.LASER_PADDLE: {
+                this.paddle.color = '#ff1744';
+                this.lasers = [];
+                this.lastLaserTime = 0;
                 break;
             }
         }
@@ -564,9 +610,100 @@ class Game {
                 }
                 break;
             }
+            case PowerUpType.STICKY_PADDLE: {
+                // Release any stuck ball
+                if (this.stickyBallOffset !== null) {
+                    this._releaseStickyBall();
+                }
+                break;
+            }
+            case PowerUpType.LASER_PADDLE: {
+                this.lasers = [];
+                break;
+            }
         }
+        this.paddle.color = '#00e5ff';
 
         this.activeEffect = null;
+    }
+
+    _releaseStickyBall(): void {
+        if (this.stickyBallOffset === null) return;
+        this.stickyBallOffset = null;
+        const angle = (Math.random() - 0.5) * Math.PI * 0.5;
+        this.ball.dx = this.ball.speed * Math.sin(angle);
+        this.ball.dy = -this.ball.speed * Math.cos(angle);
+    }
+
+    _fireLaser(): void {
+        const now = performance.now();
+        if (now - this.lastLaserTime < LASER_CONFIG.cooldown) return;
+        this.lastLaserTime = now;
+
+        // Fire two lasers from paddle edges
+        this.lasers.push(
+            {
+                x: this.paddle.x + 4 - LASER_CONFIG.width / 2,
+                y: this.paddle.y,
+                width: LASER_CONFIG.width,
+                height: LASER_CONFIG.height,
+                dy: -LASER_CONFIG.speed,
+            },
+            {
+                x: this.paddle.x + this.paddle.width - 4 - LASER_CONFIG.width / 2,
+                y: this.paddle.y,
+                width: LASER_CONFIG.width,
+                height: LASER_CONFIG.height,
+                dy: -LASER_CONFIG.speed,
+            },
+        );
+    }
+
+    _updateLasers(dt: number): void {
+        for (let i = this.lasers.length - 1; i >= 0; i--) {
+            const laser = this.lasers[i]!;
+            laser.y += laser.dy * dt;
+
+            // Off screen
+            if (laser.y + laser.height < 0) {
+                this.lasers.splice(i, 1);
+                continue;
+            }
+
+            // Brick collision
+            let hit = false;
+            for (const brick of this.bricks) {
+                if (!brick.alive) continue;
+                if (
+                    laser.x + laser.width > brick.x &&
+                    laser.x < brick.x + brick.width &&
+                    laser.y + laser.height > brick.y &&
+                    laser.y < brick.y + brick.height
+                ) {
+                    brick.alive = false;
+                    this.score += brick.points;
+                    this._trySpawnPowerUp(brick);
+                    hit = true;
+                    break;
+                }
+            }
+            if (hit) {
+                this.lasers.splice(i, 1);
+            }
+        }
+    }
+
+    _drawLasers(): void {
+        const { ctx } = this;
+        ctx.fillStyle = '#ff1744';
+        for (const laser of this.lasers) {
+            ctx.fillRect(laser.x, laser.y, laser.width, laser.height);
+            // Glow
+            ctx.shadowColor = '#ff1744';
+            ctx.shadowBlur = 6;
+            ctx.fillRect(laser.x, laser.y, laser.width, laser.height);
+            ctx.shadowBlur = 0;
+        }
     }
 
     startPlaying(): void {
@@ -594,6 +731,27 @@ class Game {
             return;
         }
 
+        // Sticky ball follows paddle
+        if (this.stickyBallOffset !== null) {
+            ball.x = paddle.x + this.stickyBallOffset;
+            ball.y = paddle.y - ball.radius - 2;
+            ball.dx = 0;
+            ball.dy = 0;
+            // Still update lasers and power-ups while stuck
+            this._updateLasers(dt);
+            this._updatePowerUps(dt);
+            if (this.activeEffect) {
+                this.activeEffect.remaining -= dt * TARGET_DT;
+                if (this.activeEffect.remaining <= 0) {
+                    this._expireEffect();
+                }
+            }
+            if (this.bricks.every((b) => !b.alive)) {
+                this._advanceLevel();
+            }
+            return;
+        }
+
         // Ball movement (scaled by dt)
         ball.x += ball.dx * dt;
         ball.y += ball.dy * dt;
@@ -616,16 +774,26 @@ class Game {
             ball.x >= paddle.x &&
             ball.x <= paddle.x + paddle.width
         ) {
-            const hitPos = (ball.x - paddle.x) / paddle.width; // 0 to 1
-            const angle = (hitPos - 0.5) * Math.PI * 0.7; // -63° to +63°
-            ball.dx = ball.speed * Math.sin(angle);
-            ball.dy = -ball.speed * Math.cos(angle);
+            if (this.activeEffect?.type === PowerUpType.STICKY_PADDLE) {
+                // Stick ball to paddle
+                this.stickyBallOffset = ball.x - paddle.x;
+                ball.dx = 0;
+                ball.dy = 0;
+                ball.y = paddle.y - ball.radius - 2;
+            } else {
+                const hitPos = (ball.x - paddle.x) / paddle.width; // 0 to 1
+                const angle = (hitPos - 0.5) * Math.PI * 0.7; // -63° to +63°
+                ball.dx = ball.speed * Math.sin(angle);
+                ball.dy = -ball.speed * Math.cos(angle);
+            }
         }
 
         // Ball falls below paddle
         if (ball.y - ball.radius > this.canvas.height) {
             this.lives--;
             this.powerUps = [];
+            this.lasers = [];
+            this.stickyBallOffset = null;
             if (this.lives <= 0) {
                 if (this.activeEffect) this._expireEffect();
                 this.state = GameState.GAME_OVER;
@@ -668,6 +836,9 @@ class Game {
         // Update power-ups
         this._updatePowerUps(dt);
 
+        // Update lasers
+        this._updateLasers(dt);
+
         // Update active effect timer (convert normalized dt back to ms)
         if (this.activeEffect) {
             this.activeEffect.remaining -= dt * TARGET_DT;
@@ -698,6 +869,7 @@ class Game {
             case GameState.PLAYING:
                 this._drawBricks();
                 this._drawPowerUps();
+                this._drawLasers();
                 this._drawPaddle();
                 this._drawBall();
                 this._drawHUD();
@@ -707,6 +879,7 @@ class Game {
             case GameState.PAUSED:
                 this._drawBricks();
                 this._drawPowerUps();
+                this._drawLasers();
                 this._drawPaddle();
                 this._drawBall();
                 this._drawHUD();
@@ -782,6 +955,22 @@ class Game {
             ctx.fillStyle = '#ffea00';
             ctx.font = '18px monospace';
             ctx.fillText('Press Space or Click to Launch', canvas.width / 2, canvas.height / 2);
+        }
+
+        // Sticky ball hint
+        if (this.stickyBallOffset !== null && Math.floor(Date.now() / 600) % 2 === 0) {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#e040fb';
+            ctx.font = '16px monospace';
+            ctx.fillText('Press Space or Click to Release', canvas.width / 2, canvas.height / 2);
+        }
+
+        // Laser hint
+        if (this.activeEffect?.type === PowerUpType.LASER_PADDLE && this.stickyBallOffset === null && this.ballLaunched) {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ff1744';
+            ctx.font = '12px monospace';
+            ctx.fillText('Space to Fire Lasers', canvas.width / 2, canvas.height - 12);
         }
     }
 
