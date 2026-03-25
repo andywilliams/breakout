@@ -2,6 +2,205 @@
 // BREAKOUT - HTML5 Canvas Game
 // ============================================================
 
+// --- Sound Manager (Web Audio API) ---
+class SoundManager {
+    private ctx: AudioContext | null = null;
+    private _muted = false;
+    private _volume = 0.3;
+
+    private _ensureCtx(): AudioContext {
+        if (!this.ctx) {
+            this.ctx = new AudioContext();
+        }
+        if (this.ctx.state === 'suspended') {
+            this.ctx.resume();
+        }
+        return this.ctx;
+    }
+
+    get muted(): boolean { return this._muted; }
+    set muted(v: boolean) { this._muted = v; }
+
+    get volume(): number { return this._volume; }
+    set volume(v: number) { this._volume = Math.max(0, Math.min(1, v)); }
+
+    private _play(setup: (ctx: AudioContext, dest: GainNode) => void): void {
+        if (this._muted) return;
+        const ctx = this._ensureCtx();
+        const master = ctx.createGain();
+        master.gain.value = this._volume;
+        master.connect(ctx.destination);
+        setup(ctx, master);
+    }
+
+    paddleHit(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(440, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(660, ctx.currentTime + 0.05);
+            gain.gain.setValueAtTime(0.5, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.1);
+        });
+    }
+
+    wallBounce(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'square';
+            osc.frequency.setValueAtTime(300, ctx.currentTime);
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.06);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.06);
+        });
+    }
+
+    brickBreak(type: BrickTypeValue): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            if (type === BrickType.EXPLOSIVE) {
+                // Explosion: noise-like burst
+                osc.type = 'sawtooth';
+                osc.frequency.setValueAtTime(200, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(50, ctx.currentTime + 0.3);
+                gain.gain.setValueAtTime(0.6, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.3);
+                osc.connect(gain).connect(dest);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.3);
+            } else if (type === BrickType.MULTI2 || type === BrickType.MULTI3) {
+                // Higher pitched metallic ping for tough bricks
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(880, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.12);
+                gain.gain.setValueAtTime(0.4, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.12);
+                osc.connect(gain).connect(dest);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.12);
+            } else {
+                // Standard break
+                osc.type = 'square';
+                osc.frequency.setValueAtTime(587, ctx.currentTime);
+                osc.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.08);
+                gain.gain.setValueAtTime(0.4, ctx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+                osc.connect(gain).connect(dest);
+                osc.start(ctx.currentTime);
+                osc.stop(ctx.currentTime + 0.08);
+            }
+        });
+    }
+
+    brickDamage(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'triangle';
+            osc.frequency.setValueAtTime(600, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(400, ctx.currentTime + 0.05);
+            gain.gain.setValueAtTime(0.3, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.05);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.05);
+        });
+    }
+
+    powerUpCollect(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sine';
+            osc.frequency.setValueAtTime(523, ctx.currentTime);
+            osc.frequency.setValueAtTime(659, ctx.currentTime + 0.06);
+            osc.frequency.setValueAtTime(784, ctx.currentTime + 0.12);
+            gain.gain.setValueAtTime(0.4, ctx.currentTime);
+            gain.gain.setValueAtTime(0.4, ctx.currentTime + 0.12);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.2);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.2);
+        });
+    }
+
+    lifeLost(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(400, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(100, ctx.currentTime + 0.4);
+            gain.gain.setValueAtTime(0.4, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.4);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.4);
+        });
+    }
+
+    gameOver(): void {
+        this._play((ctx, dest) => {
+            const notes = [392, 349, 330, 262]; // G4 F4 E4 C4 descending
+            notes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'square';
+                const t = ctx.currentTime + i * 0.2;
+                osc.frequency.setValueAtTime(freq, t);
+                gain.gain.setValueAtTime(0.3, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.18);
+                osc.connect(gain).connect(dest);
+                osc.start(t);
+                osc.stop(t + 0.18);
+            });
+        });
+    }
+
+    levelClear(): void {
+        this._play((ctx, dest) => {
+            const notes = [523, 659, 784, 1047]; // C5 E5 G5 C6 ascending
+            notes.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                const t = ctx.currentTime + i * 0.12;
+                osc.frequency.setValueAtTime(freq, t);
+                gain.gain.setValueAtTime(0.4, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.15);
+                osc.connect(gain).connect(dest);
+                osc.start(t);
+                osc.stop(t + 0.15);
+            });
+        });
+    }
+
+    laserShoot(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(1200, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(200, ctx.currentTime + 0.08);
+            gain.gain.setValueAtTime(0.2, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.08);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.08);
+        });
+    }
+}
+
+const soundManager = new SoundManager();
+
 // --- Game States ---
 const GameState = {
     MENU: 'menu',
@@ -514,6 +713,10 @@ class Game {
             }
         }
 
+        if (e.key === 'm' || e.key === 'M') {
+            soundManager.muted = !soundManager.muted;
+        }
+
         if (e.key === 'Escape') {
             if (this.state === GameState.PLAYING) {
                 this.state = GameState.PAUSED;
@@ -655,8 +858,10 @@ class Game {
         if (this.activeEffect) this._expireEffect();
         if (this.currentLevel >= LEVELS.length) {
             this.state = GameState.WIN;
+            soundManager.levelClear();
             return;
         }
+        soundManager.levelClear();
         this._applyLevelConfig();
         this.createBricks();
         this.initPositions();
@@ -701,6 +906,7 @@ class Game {
                 pu.x <= this.paddle.x + this.paddle.width
             ) {
                 this.powerUps.splice(i, 1);
+                soundManager.powerUpCollect();
                 this._applyPowerUp(pu.type);
             }
         }
@@ -828,6 +1034,7 @@ class Game {
         const now = performance.now();
         if (now - this.lastLaserTime < LASER_CONFIG.cooldown) return;
         this.lastLaserTime = now;
+        soundManager.laserShoot();
 
         // Fire two lasers from paddle edges
         this.lasers.push(
@@ -855,6 +1062,7 @@ class Game {
         if (brick.hitsLeft <= 0) {
             brick.alive = false;
             this.score += brick.points;
+            soundManager.brickBreak(brick.type);
             this._trySpawnPowerUp(brick);
 
             if (brick.type === BrickType.EXPLOSIVE) {
@@ -862,6 +1070,7 @@ class Game {
             }
         } else {
             // Multi-hit: darken color to show damage
+            soundManager.brickDamage();
             if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 2) {
                 brick.color = '#ffb300'; // darker gold
             } else if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 1) {
@@ -874,14 +1083,24 @@ class Game {
 
     _explodeNeighbors(source: Brick): void {
         const range = brickConfig.width + brickConfig.padding + 4; // slightly more than one brick span
-        for (const brick of this.bricks) {
-            if (!brick.alive || brick === source) continue;
-            if (brick.type === BrickType.INDESTRUCTIBLE) continue;
-            const dx = (brick.x + brick.width / 2) - (source.x + source.width / 2);
-            const dy = (brick.y + brick.height / 2) - (source.y + source.height / 2);
-            if (Math.abs(dx) <= range && Math.abs(dy) <= range) {
-                brick.alive = false;
-                this.score += brick.points;
+        const exploded = new Set<Brick>([source]);
+        const queue: Brick[] = [source];
+
+        while (queue.length > 0) {
+            const current = queue.shift()!;
+            for (const brick of this.bricks) {
+                if (!brick.alive || exploded.has(brick)) continue;
+                if (brick.type === BrickType.INDESTRUCTIBLE) continue;
+                const dx = (brick.x + brick.width / 2) - (current.x + current.width / 2);
+                const dy = (brick.y + brick.height / 2) - (current.y + current.height / 2);
+                if (Math.abs(dx) <= range && Math.abs(dy) <= range) {
+                    brick.alive = false;
+                    this.score += brick.points;
+                    exploded.add(brick);
+                    if (brick.type === BrickType.EXPLOSIVE) {
+                        queue.push(brick);
+                    }
+                }
             }
         }
     }
@@ -938,6 +1157,7 @@ class Game {
                 eb.x >= this.paddle.x &&
                 eb.x <= this.paddle.x + this.paddle.width
             ) {
+                soundManager.paddleHit();
                 const hitPos = (eb.x - this.paddle.x) / this.paddle.width;
                 const angle = (hitPos - 0.5) * Math.PI * 0.7;
                 eb.dx = eb.speed * Math.sin(angle);
@@ -1069,11 +1289,13 @@ class Game {
         // Wall collisions (left/right)
         if (ball.x - ball.radius <= 0 || ball.x + ball.radius >= this.canvas.width) {
             ball.dx = -ball.dx;
+            soundManager.wallBounce();
         }
 
         // Ceiling collision
         if (ball.y - ball.radius <= 0) {
             ball.dy = -ball.dy;
+            soundManager.wallBounce();
         }
 
         // Paddle collision
@@ -1084,6 +1306,7 @@ class Game {
             ball.x >= paddle.x &&
             ball.x <= paddle.x + paddle.width
         ) {
+            soundManager.paddleHit();
             if (this.activeEffect?.type === PowerUpType.STICKY_PADDLE) {
                 // Stick ball to paddle
                 this.stickyBallOffset = ball.x - paddle.x;
@@ -1119,7 +1342,9 @@ class Game {
                 if (this.lives <= 0) {
                     if (this.activeEffect) this._expireEffect();
                     this.state = GameState.GAME_OVER;
+                    soundManager.gameOver();
                 } else {
+                    soundManager.lifeLost();
                     this.initPositions();
                 }
             }
@@ -1291,6 +1516,12 @@ class Game {
         ctx.textAlign = 'right';
         ctx.fillText(`Lives: ${this.lives}`, canvas.width - 15, 30);
 
+        // Sound indicator
+        ctx.fillStyle = soundManager.muted ? '#555' : '#aaa';
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(soundManager.muted ? 'MUTED [M]' : 'SFX ON [M]', canvas.width - 15, 48);
+
         // Launch hint
         if (!this.ballLaunched && Math.floor(Date.now() / 600) % 2 === 0) {
             ctx.textAlign = 'center';
@@ -1418,7 +1649,7 @@ class Game {
         // Controls hint
         ctx.fillStyle = '#555';
         ctx.font = '14px monospace';
-        ctx.fillText('\u2190 \u2192 or A/D to move  |  Esc to pause', canvas.width / 2, canvas.height / 2 + 130);
+        ctx.fillText('\u2190 \u2192 or A/D to move  |  Esc to pause  |  M to mute', canvas.width / 2, canvas.height / 2 + 130);
         ctx.fillText('Press H for High Scores', canvas.width / 2, canvas.height / 2 + 155);
 
         ctx.restore();
