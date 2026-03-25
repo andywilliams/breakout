@@ -144,6 +144,42 @@ const LEVELS: LevelConfig[] = [
     },
 ];
 
+// --- Power-Up System ---
+const PowerUpType = {
+    WIDE_PADDLE: 'widePaddle',
+} as const;
+
+type PowerUpTypeValue = (typeof PowerUpType)[keyof typeof PowerUpType];
+
+interface PowerUp {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    dy: number;
+    type: PowerUpTypeValue;
+    color: string;
+    label: string;
+}
+
+interface ActiveEffect {
+    type: PowerUpTypeValue;
+    remaining: number; // ms remaining
+    duration: number;  // total ms duration
+}
+
+const POWER_UP_CONFIG = {
+    dropChance: 0.2,       // 20% chance per brick
+    fallSpeed: 2,          // pixels per dt unit
+    width: 30,
+    height: 14,
+    effectDuration: 10000, // 10 seconds
+};
+
+const POWER_UP_DEFS: Record<PowerUpTypeValue, { color: string; label: string }> = {
+    [PowerUpType.WIDE_PADDLE]: { color: '#00e676', label: 'W' },
+};
+
 // Target frame duration for delta time normalization (60 fps)
 const TARGET_DT = 1000 / 60;
 
@@ -182,6 +218,8 @@ class Game {
     ball: Ball;
     bricks: Brick[];
     keys: Record<string, boolean>;
+    powerUps: PowerUp[];
+    activeEffect: ActiveEffect | null;
 
     lastTime: number;
     animFrameId: number | null;
@@ -227,6 +265,8 @@ class Game {
 
         this.bricks = [];
         this.keys = {};
+        this.powerUps = [];
+        this.activeEffect = null;
 
         // Delta time tracking
         this.lastTime = 0;
@@ -416,6 +456,8 @@ class Game {
         this.score = 0;
         this.lives = 3;
         this.currentLevel = 0;
+        this.powerUps = [];
+        if (this.activeEffect) this._expireEffect();
         this._applyLevelConfig();
         this.createBricks();
         this.initPositions();
@@ -429,6 +471,8 @@ class Game {
 
     _advanceLevel(): void {
         this.currentLevel++;
+        this.powerUps = [];
+        if (this.activeEffect) this._expireEffect();
         if (this.currentLevel >= LEVELS.length) {
             this.state = GameState.WIN;
             return;
@@ -436,6 +480,93 @@ class Game {
         this._applyLevelConfig();
         this.createBricks();
         this.initPositions();
+    }
+
+    // --- Power-Up Methods ---
+    _trySpawnPowerUp(brick: Brick): void {
+        if (Math.random() > POWER_UP_CONFIG.dropChance) return;
+
+        const types = Object.values(PowerUpType);
+        const type = types[Math.floor(Math.random() * types.length)]!;
+        const def = POWER_UP_DEFS[type];
+
+        this.powerUps.push({
+            x: brick.x + brick.width / 2 - POWER_UP_CONFIG.width / 2,
+            y: brick.y + brick.height,
+            width: POWER_UP_CONFIG.width,
+            height: POWER_UP_CONFIG.height,
+            dy: POWER_UP_CONFIG.fallSpeed,
+            type,
+            color: def.color,
+            label: def.label,
+        });
+    }
+
+    _updatePowerUps(dt: number): void {
+        for (let i = this.powerUps.length - 1; i >= 0; i--) {
+            const pu = this.powerUps[i]!;
+            pu.y += pu.dy * dt;
+
+            // Fell off screen
+            if (pu.y > this.canvas.height) {
+                this.powerUps.splice(i, 1);
+                continue;
+            }
+
+            // Paddle collision
+            if (
+                pu.y + pu.height >= this.paddle.y &&
+                pu.y <= this.paddle.y + this.paddle.height &&
+                pu.x + pu.width >= this.paddle.x &&
+                pu.x <= this.paddle.x + this.paddle.width
+            ) {
+                this.powerUps.splice(i, 1);
+                this._applyPowerUp(pu.type);
+            }
+        }
+    }
+
+    _applyPowerUp(type: PowerUpTypeValue): void {
+        // If there's already an active effect, expire it first
+        if (this.activeEffect) {
+            this._expireEffect();
+        }
+
+        this.activeEffect = {
+            type,
+            remaining: POWER_UP_CONFIG.effectDuration,
+            duration: POWER_UP_CONFIG.effectDuration,
+        };
+
+        switch (type) {
+            case PowerUpType.WIDE_PADDLE: {
+                const level = LEVELS[this.currentLevel]!;
+                this.paddle.width = level.paddleWidth * 1.5;
+                // Re-center paddle if it would go off screen
+                if (this.paddle.x + this.paddle.width > this.canvas.width) {
+                    this.paddle.x = this.canvas.width - this.paddle.width;
+                }
+                break;
+            }
+        }
+    }
+
+    _expireEffect(): void {
+        if (!this.activeEffect) return;
+
+        switch (this.activeEffect.type) {
+            case PowerUpType.WIDE_PADDLE: {
+                const level = LEVELS[this.currentLevel]!;
+                this.paddle.width = level.paddleWidth;
+                // Re-center paddle if it would go off screen
+                if (this.paddle.x + this.paddle.width > this.canvas.width) {
+                    this.paddle.x = this.canvas.width - this.paddle.width;
+                }
+                break;
+            }
+        }
+
+        this.activeEffect = null;
     }
 
     startPlaying(): void {
@@ -494,7 +625,9 @@ class Game {
         // Ball falls below paddle
         if (ball.y - ball.radius > this.canvas.height) {
             this.lives--;
+            this.powerUps = [];
             if (this.lives <= 0) {
+                if (this.activeEffect) this._expireEffect();
                 this.state = GameState.GAME_OVER;
             } else {
                 this.initPositions();
@@ -513,6 +646,7 @@ class Game {
             ) {
                 brick.alive = false;
                 this.score += brick.points;
+                this._trySpawnPowerUp(brick);
 
                 // Determine which side was hit for correct bounce direction
                 const overlapLeft = ball.x + ball.radius - brick.x;
@@ -528,6 +662,17 @@ class Game {
                 } else {
                     ball.dy = -ball.dy; // top/bottom hit
                 }
+            }
+        }
+
+        // Update power-ups
+        this._updatePowerUps(dt);
+
+        // Update active effect timer (convert normalized dt back to ms)
+        if (this.activeEffect) {
+            this.activeEffect.remaining -= dt * TARGET_DT;
+            if (this.activeEffect.remaining <= 0) {
+                this._expireEffect();
             }
         }
 
@@ -552,16 +697,20 @@ class Game {
 
             case GameState.PLAYING:
                 this._drawBricks();
+                this._drawPowerUps();
                 this._drawPaddle();
                 this._drawBall();
                 this._drawHUD();
+                this._drawActiveEffect();
                 break;
 
             case GameState.PAUSED:
                 this._drawBricks();
+                this._drawPowerUps();
                 this._drawPaddle();
                 this._drawBall();
                 this._drawHUD();
+                this._drawActiveEffect();
                 this._drawPauseOverlay();
                 break;
 
@@ -634,6 +783,40 @@ class Game {
             ctx.font = '18px monospace';
             ctx.fillText('Press Space or Click to Launch', canvas.width / 2, canvas.height / 2);
         }
+    }
+
+    _drawPowerUps(): void {
+        const { ctx } = this;
+        for (const pu of this.powerUps) {
+            ctx.fillStyle = pu.color;
+            ctx.fillRect(pu.x, pu.y, pu.width, pu.height);
+            ctx.fillStyle = '#111';
+            ctx.font = 'bold 10px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(pu.label, pu.x + pu.width / 2, pu.y + pu.height / 2);
+        }
+    }
+
+    _drawActiveEffect(): void {
+        if (!this.activeEffect) return;
+        const { ctx, canvas } = this;
+        const effect = this.activeEffect;
+        const def = POWER_UP_DEFS[effect.type];
+        const pct = effect.remaining / effect.duration;
+
+        // Draw timer bar at very top of canvas
+        const barHeight = 4;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, canvas.width, barHeight);
+        ctx.fillStyle = def.color;
+        ctx.fillRect(0, 0, canvas.width * pct, barHeight);
+
+        // Label next to score area
+        ctx.fillStyle = def.color;
+        ctx.font = '12px monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${def.label} ${Math.ceil(effect.remaining / 1000)}s`, 15, 48);
     }
 
     _drawPauseOverlay(): void {
