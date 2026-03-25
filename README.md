@@ -42,7 +42,19 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 - The ball bounces off walls, the ceiling, and your paddle
 - Where the ball hits the paddle affects its angle — edges send it at sharper angles, center sends it straight up
 - Lose a life when the ball falls below the paddle
-- Game over when all lives are lost; clear all bricks to win
+- Clear all breakable bricks in a level to advance to the next one
+- Beat all 8 levels to win the game
+- Game over when all lives are lost
+
+### Brick Types
+
+| Type | Appearance | Behavior |
+|------|-----------|----------|
+| **Standard** | Solid color | Destroyed in 1 hit |
+| **Multi-hit (2)** | Silver with damage dots | Takes 2 hits to destroy |
+| **Multi-hit (3)** | Gold with damage dots | Takes 3 hits to destroy |
+| **Indestructible** | Grey cross-hatch | Cannot be destroyed — ignored for level-clear |
+| **Explosive** | Orange with star icon | Destroys all adjacent bricks when broken (can chain-react) |
 
 ### Power-Ups
 
@@ -61,19 +73,26 @@ Destroying a brick has a **20% chance** to drop a power-up capsule. The capsule 
 - Power-ups are **cleared** when you lose a life, advance to the next level, or restart the game
 - If a capsule falls off the bottom of the screen without being caught, it despawns
 
+### Levels
+
+The game features 8 levels with increasing difficulty. Each level has a unique brick layout, and later levels ramp up ball speed while shrinking paddle width.
+
+| Level | Name | Pattern | Brick Types | Ball Speed | Paddle Width |
+|-------|------|---------|-------------|------------|-------------|
+| 1 | Classic | Full 5-row grid | Standard only | 4.0 | 100 |
+| 2 | Diamond | Diamond shape with gaps | Standard | 4.0 | 100 |
+| 3 | Armor Up | Alternating gaps with armored top | Standard, Multi-2 | 4.2 | 95 |
+| 4 | Fortress | Corridors walled by indestructible bricks | Standard, Indestructible | 4.5 | 90 |
+| 5 | Demolition | Dense grid with explosive clusters | Standard, Explosive | 4.5 | 90 |
+| 6 | Iron Curtain | Heavy multi-hit shield over standard rows | Standard, Multi-2, Multi-3, Explosive | 4.8 | 85 |
+| 7 | Labyrinth | Maze of indestructible walls with explosive shortcuts | Standard, Multi-2, Indestructible, Explosive | 5.0 | 85 |
+| 8 | Endgame | Everything combined, maximum density | All types | 5.5 | 80 |
+
 ### Scoring
 
-Points depend on which row the brick is in — higher rows are worth more:
+Points depend on which row a brick is in — higher rows are worth more. Point values increase in later levels to reward progression. For example, Level 1's top row awards 50 points per brick, while Level 8's top row awards 80.
 
-| Row | Color | Points |
-|-----|-------|--------|
-| 1 (top) | Red | 50 |
-| 2 | Orange | 40 |
-| 3 | Yellow | 30 |
-| 4 | Green | 20 |
-| 5 (bottom) | Blue | 10 |
-
-**Maximum possible score:** 1,500 (50 bricks × weighted points)
+Multi-hit bricks award points only when fully destroyed. Indestructible bricks give no points. Explosive bricks award their own points plus trigger destruction (and scoring) of adjacent bricks.
 
 ### High Scores
 
@@ -92,7 +111,7 @@ The game uses a state machine with the following states:
 | **Playing** | Active gameplay with ball, paddle, and bricks |
 | **Paused** | Gameplay frozen — press Escape to resume |
 | **Game Over** | All lives lost — enter high score or restart |
-| **Win** | All bricks cleared — enter high score or play again |
+| **Win** | All 8 levels cleared — enter high score or play again |
 | **High Score Entry** | Type 3-letter initials after a qualifying score |
 | **High Scores** | Leaderboard view |
 
