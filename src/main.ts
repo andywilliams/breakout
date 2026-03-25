@@ -149,6 +149,9 @@ const PowerUpType = {
     WIDE_PADDLE: 'widePaddle',
     STICKY_PADDLE: 'stickyPaddle',
     LASER_PADDLE: 'laserPaddle',
+    MULTI_BALL: 'multiBall',
+    SLOW_BALL: 'slowBall',
+    SPEED_BALL: 'speedBall',
 } as const;
 
 type PowerUpTypeValue = (typeof PowerUpType)[keyof typeof PowerUpType];
@@ -197,6 +200,9 @@ const POWER_UP_DEFS: Record<PowerUpTypeValue, { color: string; label: string }> 
     [PowerUpType.WIDE_PADDLE]: { color: '#00e676', label: 'W' },
     [PowerUpType.STICKY_PADDLE]: { color: '#e040fb', label: 'S' },
     [PowerUpType.LASER_PADDLE]: { color: '#ff1744', label: 'L' },
+    [PowerUpType.MULTI_BALL]: { color: '#00bcd4', label: 'M' },
+    [PowerUpType.SLOW_BALL]: { color: '#2979ff', label: '-' },
+    [PowerUpType.SPEED_BALL]: { color: '#ff9100', label: '+' },
 };
 
 // Target frame duration for delta time normalization (60 fps)
@@ -235,6 +241,7 @@ class Game {
 
     paddle: Paddle;
     ball: Ball;
+    extraBalls: Ball[];
     bricks: Brick[];
     keys: Record<string, boolean>;
     powerUps: PowerUp[];
@@ -242,6 +249,7 @@ class Game {
     lasers: Laser[];
     lastLaserTime: number;
     stickyBallOffset: number | null; // offset from paddle.x when ball is stuck
+    baseSpeed: number; // level base ball speed, used for slow/speed revert
 
     lastTime: number;
     animFrameId: number | null;
@@ -286,12 +294,14 @@ class Game {
         };
 
         this.bricks = [];
+        this.extraBalls = [];
         this.keys = {};
         this.powerUps = [];
         this.activeEffect = null;
         this.lasers = [];
         this.lastLaserTime = 0;
         this.stickyBallOffset = null;
+        this.baseSpeed = 4;
 
         // Delta time tracking
         this.lastTime = 0;
@@ -450,10 +460,12 @@ class Game {
 
         this.ballLaunched = false;
         this.stickyBallOffset = null;
+        this.extraBalls = [];
         this.ball.x = this.paddle.x + this.paddle.width / 2;
         this.ball.y = this.paddle.y - this.ball.radius - 2;
         this.ball.dx = 0;
         this.ball.dy = 0;
+        this.ball.color = '#fff';
     }
 
     launchBall(): void {
@@ -490,6 +502,7 @@ class Game {
         this.currentLevel = 0;
         this.powerUps = [];
         this.lasers = [];
+        this.extraBalls = [];
         if (this.activeEffect) this._expireEffect();
         this._applyLevelConfig();
         this.createBricks();
@@ -499,6 +512,7 @@ class Game {
     _applyLevelConfig(): void {
         const level = LEVELS[this.currentLevel]!;
         this.ball.speed = level.ballSpeed;
+        this.baseSpeed = level.ballSpeed;
         this.paddle.width = level.paddleWidth;
     }
 
@@ -506,6 +520,7 @@ class Game {
         this.currentLevel++;
         this.powerUps = [];
         this.lasers = [];
+        this.extraBalls = [];
         this.stickyBallOffset = null;
         if (this.activeEffect) this._expireEffect();
         if (this.currentLevel >= LEVELS.length) {
@@ -594,6 +609,37 @@ class Game {
                 this.lastLaserTime = 0;
                 break;
             }
+            case PowerUpType.MULTI_BALL: {
+                // Spawn 2 extra balls from current ball position
+                const src = this.ball;
+                const angles = [-Math.PI / 4, Math.PI / 4]; // -45° and +45° from vertical
+                for (const angle of angles) {
+                    this.extraBalls.push({
+                        x: src.x,
+                        y: src.y,
+                        radius: src.radius,
+                        dx: src.speed * Math.sin(angle),
+                        dy: -src.speed * Math.cos(angle),
+                        speed: src.speed,
+                        color: '#00bcd4',
+                    });
+                }
+                break;
+            }
+            case PowerUpType.SLOW_BALL: {
+                const slowSpeed = this.baseSpeed * 0.6;
+                this._setAllBallSpeeds(slowSpeed);
+                this.ball.color = '#2979ff';
+                for (const eb of this.extraBalls) eb.color = '#2979ff';
+                break;
+            }
+            case PowerUpType.SPEED_BALL: {
+                const fastSpeed = this.baseSpeed * 1.5;
+                this._setAllBallSpeeds(fastSpeed);
+                this.ball.color = '#ff9100';
+                for (const eb of this.extraBalls) eb.color = '#ff9100';
+                break;
+            }
         }
     }
 
@@ -619,6 +665,19 @@ class Game {
             }
             case PowerUpType.LASER_PADDLE: {
                 this.lasers = [];
+                break;
+            }
+            case PowerUpType.MULTI_BALL: {
+                // Extra balls just disappear when effect expires
+                this.extraBalls = [];
+                break;
+            }
+            case PowerUpType.SLOW_BALL:
+            case PowerUpType.SPEED_BALL: {
+                // Revert to base speed
+                this._setAllBallSpeeds(this.baseSpeed);
+                this.ball.color = '#fff';
+                for (const eb of this.extraBalls) eb.color = '#00bcd4';
                 break;
             }
         }
@@ -657,6 +716,93 @@ class Game {
                 dy: -LASER_CONFIG.speed,
             },
         );
+    }
+
+    _processBallBrickCollisions(b: Ball): void {
+        for (const brick of this.bricks) {
+            if (!brick.alive) continue;
+
+            if (
+                b.x + b.radius > brick.x &&
+                b.x - b.radius < brick.x + brick.width &&
+                b.y + b.radius > brick.y &&
+                b.y - b.radius < brick.y + brick.height
+            ) {
+                brick.alive = false;
+                this.score += brick.points;
+                this._trySpawnPowerUp(brick);
+
+                const overlapLeft = b.x + b.radius - brick.x;
+                const overlapRight = brick.x + brick.width - (b.x - b.radius);
+                const overlapTop = b.y + b.radius - brick.y;
+                const overlapBottom = brick.y + brick.height - (b.y - b.radius);
+
+                const minOverlapX = Math.min(overlapLeft, overlapRight);
+                const minOverlapY = Math.min(overlapTop, overlapBottom);
+
+                if (minOverlapX < minOverlapY) {
+                    b.dx = -b.dx;
+                } else {
+                    b.dy = -b.dy;
+                }
+            }
+        }
+    }
+
+    _updateExtraBalls(dt: number): void {
+        for (let i = this.extraBalls.length - 1; i >= 0; i--) {
+            const eb = this.extraBalls[i]!;
+
+            eb.x += eb.dx * dt;
+            eb.y += eb.dy * dt;
+
+            // Wall collisions
+            if (eb.x - eb.radius <= 0 || eb.x + eb.radius >= this.canvas.width) {
+                eb.dx = -eb.dx;
+            }
+            if (eb.y - eb.radius <= 0) {
+                eb.dy = -eb.dy;
+            }
+
+            // Paddle collision
+            if (
+                eb.dy > 0 &&
+                eb.y + eb.radius >= this.paddle.y &&
+                eb.y + eb.radius <= this.paddle.y + this.paddle.height &&
+                eb.x >= this.paddle.x &&
+                eb.x <= this.paddle.x + this.paddle.width
+            ) {
+                const hitPos = (eb.x - this.paddle.x) / this.paddle.width;
+                const angle = (hitPos - 0.5) * Math.PI * 0.7;
+                eb.dx = eb.speed * Math.sin(angle);
+                eb.dy = -eb.speed * Math.cos(angle);
+            }
+
+            // Falls off screen — remove
+            if (eb.y - eb.radius > this.canvas.height) {
+                this.extraBalls.splice(i, 1);
+                continue;
+            }
+
+            // Brick collisions
+            this._processBallBrickCollisions(eb);
+        }
+    }
+
+    _setAllBallSpeeds(newSpeed: number): void {
+        for (const b of [this.ball, ...this.extraBalls]) {
+            if (b.dx === 0 && b.dy === 0) {
+                b.speed = newSpeed;
+                continue;
+            }
+            const currentSpeed = Math.sqrt(b.dx * b.dx + b.dy * b.dy);
+            if (currentSpeed > 0) {
+                const scale = newSpeed / currentSpeed;
+                b.dx *= scale;
+                b.dy *= scale;
+            }
+            b.speed = newSpeed;
+        }
     }
 
     _updateLasers(dt: number): void {
@@ -788,50 +934,38 @@ class Game {
             }
         }
 
-        // Ball falls below paddle
+        // Ball falls below paddle — only lose life when ALL balls are gone
         if (ball.y - ball.radius > this.canvas.height) {
-            this.lives--;
-            this.powerUps = [];
-            this.lasers = [];
-            this.stickyBallOffset = null;
-            if (this.lives <= 0) {
-                if (this.activeEffect) this._expireEffect();
-                this.state = GameState.GAME_OVER;
+            if (this.extraBalls.length > 0) {
+                // Promote first extra ball to primary
+                const promoted = this.extraBalls.shift()!;
+                this.ball.x = promoted.x;
+                this.ball.y = promoted.y;
+                this.ball.dx = promoted.dx;
+                this.ball.dy = promoted.dy;
+                this.ball.speed = promoted.speed;
+                this.ball.color = promoted.color;
+                this.ball.radius = promoted.radius;
             } else {
-                this.initPositions();
-            }
-        }
-
-        // Brick collisions
-        for (const brick of this.bricks) {
-            if (!brick.alive) continue;
-
-            if (
-                ball.x + ball.radius > brick.x &&
-                ball.x - ball.radius < brick.x + brick.width &&
-                ball.y + ball.radius > brick.y &&
-                ball.y - ball.radius < brick.y + brick.height
-            ) {
-                brick.alive = false;
-                this.score += brick.points;
-                this._trySpawnPowerUp(brick);
-
-                // Determine which side was hit for correct bounce direction
-                const overlapLeft = ball.x + ball.radius - brick.x;
-                const overlapRight = brick.x + brick.width - (ball.x - ball.radius);
-                const overlapTop = ball.y + ball.radius - brick.y;
-                const overlapBottom = brick.y + brick.height - (ball.y - ball.radius);
-
-                const minOverlapX = Math.min(overlapLeft, overlapRight);
-                const minOverlapY = Math.min(overlapTop, overlapBottom);
-
-                if (minOverlapX < minOverlapY) {
-                    ball.dx = -ball.dx; // side hit
+                this.lives--;
+                this.powerUps = [];
+                this.lasers = [];
+                this.extraBalls = [];
+                this.stickyBallOffset = null;
+                if (this.lives <= 0) {
+                    if (this.activeEffect) this._expireEffect();
+                    this.state = GameState.GAME_OVER;
                 } else {
-                    ball.dy = -ball.dy; // top/bottom hit
+                    this.initPositions();
                 }
             }
         }
+
+        // Brick collisions (primary ball)
+        this._processBallBrickCollisions(ball);
+
+        // Update extra balls
+        this._updateExtraBalls(dt);
 
         // Update power-ups
         this._updatePowerUps(dt);
@@ -910,11 +1044,20 @@ class Game {
     // --- Drawing ---
     _drawBall(): void {
         const { ctx, ball } = this;
+        // Draw primary ball
         ctx.beginPath();
         ctx.arc(ball.x, ball.y, ball.radius, 0, Math.PI * 2);
         ctx.fillStyle = ball.color;
         ctx.fill();
         ctx.closePath();
+        // Draw extra balls
+        for (const eb of this.extraBalls) {
+            ctx.beginPath();
+            ctx.arc(eb.x, eb.y, eb.radius, 0, Math.PI * 2);
+            ctx.fillStyle = eb.color;
+            ctx.fill();
+            ctx.closePath();
+        }
     }
 
     _drawPaddle(): void {
