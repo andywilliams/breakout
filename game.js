@@ -92,6 +92,7 @@ const brickConfig = {
     offsetTop: 60,
     offsetLeft: 35,
     colors: ['#ff1744', '#ff9100', '#ffea00', '#00e676', '#2979ff'],
+    points: [50, 40, 30, 20, 10], // top rows worth more
 };
 
 let bricks = [];
@@ -221,6 +222,7 @@ function createBricks() {
                 width: brickConfig.width,
                 height: brickConfig.height,
                 color: brickConfig.colors[row],
+                points: brickConfig.points[row],
                 alive: true,
             });
         }
@@ -308,7 +310,7 @@ function update() {
             ball.y - ball.radius < brick.y + brick.height
         ) {
             brick.alive = false;
-            score += 10;
+            score += brick.points;
 
             // Determine which side was hit for correct bounce direction
             const overlapLeft = ball.x + ball.radius - brick.x;
