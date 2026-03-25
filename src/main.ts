@@ -62,15 +62,11 @@ function addHighScore(initials: string, newScore: number): void {
 
 // --- Brick Config ---
 const brickConfig = {
-    rows: 5,
-    cols: 10,
     width: 68,
     height: 22,
     padding: 6,
     offsetTop: 60,
     offsetLeft: 35,
-    colors: ['#ff1744', '#ff9100', '#ffea00', '#00e676', '#2979ff'],
-    points: [50, 40, 30, 20, 10], // top rows worth more
 };
 
 interface Brick {
@@ -82,6 +78,71 @@ interface Brick {
     points: number;
     alive: boolean;
 }
+
+// --- Level System ---
+interface BrickRowConfig {
+    color: string;
+    points: number;
+    /** Which columns have bricks (true = brick present). Length must equal cols. */
+    pattern: boolean[];
+}
+
+interface LevelConfig {
+    level: number;
+    name: string;
+    cols: number;
+    rows: BrickRowConfig[];
+    ballSpeed: number;
+    paddleWidth: number;
+}
+
+const LEVELS: LevelConfig[] = [
+    {
+        level: 1,
+        name: 'Classic',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 50, pattern: Array(10).fill(true) },
+            { color: '#ff9100', points: 40, pattern: Array(10).fill(true) },
+            { color: '#ffea00', points: 30, pattern: Array(10).fill(true) },
+            { color: '#00e676', points: 20, pattern: Array(10).fill(true) },
+            { color: '#2979ff', points: 10, pattern: Array(10).fill(true) },
+        ],
+        ballSpeed: 4,
+        paddleWidth: 100,
+    },
+    {
+        level: 2,
+        name: 'Fortress',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 60, pattern: [false, true, true, true, true, true, true, true, true, false] },
+            { color: '#ff9100', points: 50, pattern: [true, false, true, true, true, true, true, true, false, true] },
+            { color: '#ffea00', points: 40, pattern: [true, true, false, true, true, true, true, false, true, true] },
+            { color: '#00e676', points: 30, pattern: [true, true, true, false, true, true, false, true, true, true] },
+            { color: '#2979ff', points: 20, pattern: [true, true, true, true, false, false, true, true, true, true] },
+            { color: '#e040fb', points: 10, pattern: Array(10).fill(true) },
+        ],
+        ballSpeed: 4.5,
+        paddleWidth: 90,
+    },
+    {
+        level: 3,
+        name: 'Gauntlet',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 70, pattern: [true, false, true, false, true, true, false, true, false, true] },
+            { color: '#ff9100', points: 60, pattern: [false, true, false, true, false, false, true, false, true, false] },
+            { color: '#ffea00', points: 50, pattern: [true, false, true, false, true, true, false, true, false, true] },
+            { color: '#00e676', points: 40, pattern: [false, true, false, true, false, false, true, false, true, false] },
+            { color: '#2979ff', points: 30, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#e040fb', points: 20, pattern: [true, true, true, true, true, true, true, true, true, true] },
+            { color: '#00bcd4', points: 10, pattern: [true, true, true, true, true, true, true, true, true, true] },
+        ],
+        ballSpeed: 5,
+        paddleWidth: 80,
+    },
+];
 
 // Target frame duration for delta time normalization (60 fps)
 const TARGET_DT = 1000 / 60;
@@ -112,6 +173,7 @@ class Game {
     state: GameStateValue;
     score: number;
     lives: number;
+    currentLevel: number;
     ballLaunched: boolean;
     initialsBuffer: string;
     highScoreJustEntered: boolean;
@@ -139,6 +201,7 @@ class Game {
         this.state = GameState.MENU;
         this.score = 0;
         this.lives = 3;
+        this.currentLevel = 0;
         this.ballLaunched = false;
         this.initialsBuffer = '';
         this.highScoreJustEntered = false;
@@ -330,16 +393,19 @@ class Game {
     }
 
     createBricks(): void {
+        const level = LEVELS[this.currentLevel]!;
         this.bricks = [];
-        for (let row = 0; row < brickConfig.rows; row++) {
-            for (let col = 0; col < brickConfig.cols; col++) {
+        for (let row = 0; row < level.rows.length; row++) {
+            const rowConfig = level.rows[row]!;
+            for (let col = 0; col < level.cols; col++) {
+                if (!rowConfig.pattern[col]) continue;
                 this.bricks.push({
                     x: brickConfig.offsetLeft + col * (brickConfig.width + brickConfig.padding),
                     y: brickConfig.offsetTop + row * (brickConfig.height + brickConfig.padding),
                     width: brickConfig.width,
                     height: brickConfig.height,
-                    color: brickConfig.colors[row]!,
-                    points: brickConfig.points[row]!,
+                    color: rowConfig.color,
+                    points: rowConfig.points,
                     alive: true,
                 });
             }
@@ -349,6 +415,25 @@ class Game {
     resetGame(): void {
         this.score = 0;
         this.lives = 3;
+        this.currentLevel = 0;
+        this._applyLevelConfig();
+        this.createBricks();
+        this.initPositions();
+    }
+
+    _applyLevelConfig(): void {
+        const level = LEVELS[this.currentLevel]!;
+        this.ball.speed = level.ballSpeed;
+        this.paddle.width = level.paddleWidth;
+    }
+
+    _advanceLevel(): void {
+        this.currentLevel++;
+        if (this.currentLevel >= LEVELS.length) {
+            this.state = GameState.WIN;
+            return;
+        }
+        this._applyLevelConfig();
         this.createBricks();
         this.initPositions();
     }
@@ -446,9 +531,9 @@ class Game {
             }
         }
 
-        // Win condition
+        // Level clear — advance or win
         if (this.bricks.every((b) => !b.alive)) {
-            this.state = GameState.WIN;
+            this._advanceLevel();
         }
     }
 
@@ -537,6 +622,8 @@ class Game {
         ctx.font = '16px monospace';
         ctx.textAlign = 'left';
         ctx.fillText(`Score: ${this.score}`, 15, 30);
+        ctx.textAlign = 'center';
+        ctx.fillText(`Level ${this.currentLevel + 1}`, canvas.width / 2, 30);
         ctx.textAlign = 'right';
         ctx.fillText(`Lives: ${this.lives}`, canvas.width - 15, 30);
 

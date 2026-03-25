@@ -31,6 +31,7 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 | Mouse | Paddle follows cursor |
 | Touch | Paddle follows touch position |
 | `Space` or Click | Launch ball / Start game |
+| `Escape` | Pause / Resume (during gameplay) |
 | `H` | View high scores (from start screen) |
 | `Escape` | Return to start screen (from high scores) |
 
@@ -63,6 +64,22 @@ Points depend on which row the brick is in — higher rows are worth more:
 - After a qualifying game, you'll be prompted to enter 3-letter initials
 - Scores persist across browser sessions
 - View the leaderboard by pressing `H` on the start screen
+
+### Game States
+
+The game uses a state machine with the following states:
+
+| State | Description |
+|-------|-------------|
+| **Menu** | Title screen — press Space to play, H for high scores |
+| **Playing** | Active gameplay with ball, paddle, and bricks |
+| **Paused** | Gameplay frozen — press Escape to resume |
+| **Game Over** | All lives lost — enter high score or restart |
+| **Win** | All bricks cleared — enter high score or play again |
+| **High Score Entry** | Type 3-letter initials after a qualifying score |
+| **High Scores** | Leaderboard view |
+
+The game loop uses `requestAnimationFrame` with delta-time normalization (targeting 60fps), so gameplay runs at consistent speed regardless of your monitor's refresh rate. A delta clamp prevents physics glitches after switching back from another tab.
 
 ## Tech Stack
 
