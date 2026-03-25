@@ -41,7 +41,7 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 - The ball sits on the paddle until you launch it with `Space` or a click
 - The ball bounces off walls, the ceiling, and your paddle
 - Where the ball hits the paddle affects its angle — edges send it at sharper angles, center sends it straight up
-- Lose a life when the ball falls below the paddle
+- Lose a life when the ball falls below the paddle (with Multi-Ball active, only when *all* balls are lost)
 - Game over when all lives are lost; clear all bricks to win
 
 ### Power-Ups
@@ -53,6 +53,9 @@ Destroying a brick has a **20% chance** to drop a power-up capsule. The capsule 
 | **Wide Paddle** | W | Green | Expands paddle width by 50% |
 | **Sticky Paddle** | S | Purple | Ball sticks to paddle on contact — press `Space` or click to release |
 | **Laser Paddle** | L | Red | Press `Space` to fire lasers that destroy bricks |
+| **Multi-Ball** | M | Cyan | Splits into 3 balls — life lost only when all balls fall off screen |
+| **Slow Ball** | - | Blue | Reduces ball speed to 60% — balls turn blue |
+| **Speed Ball** | + | Orange | Increases ball speed to 150% — balls turn orange |
 
 **How it works:**
 
