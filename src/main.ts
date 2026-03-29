@@ -202,6 +202,53 @@ class SoundManager {
         });
     }
 
+    bossHit(): void {
+        this._play((ctx, dest) => {
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            osc.type = 'sawtooth';
+            osc.frequency.setValueAtTime(150, ctx.currentTime);
+            osc.frequency.exponentialRampToValueAtTime(80, ctx.currentTime + 0.15);
+            gain.gain.setValueAtTime(0.5, ctx.currentTime);
+            gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.15);
+            osc.connect(gain).connect(dest);
+            osc.start(ctx.currentTime);
+            osc.stop(ctx.currentTime + 0.15);
+        });
+    }
+
+    bossDefeat(): void {
+        this._play((ctx, dest) => {
+            // Epic descending explosion followed by triumphant fanfare
+            // Explosion phase
+            const noise = ctx.createOscillator();
+            const noiseGain = ctx.createGain();
+            noise.type = 'sawtooth';
+            noise.frequency.setValueAtTime(400, ctx.currentTime);
+            noise.frequency.exponentialRampToValueAtTime(30, ctx.currentTime + 0.6);
+            noiseGain.gain.setValueAtTime(0.6, ctx.currentTime);
+            noiseGain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.6);
+            noise.connect(noiseGain).connect(dest);
+            noise.start(ctx.currentTime);
+            noise.stop(ctx.currentTime + 0.6);
+
+            // Fanfare phase
+            const fanfare = [523, 659, 784, 1047, 1319]; // C5 E5 G5 C6 E6
+            fanfare.forEach((freq, i) => {
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.type = 'sine';
+                const t = ctx.currentTime + 0.5 + i * 0.15;
+                osc.frequency.setValueAtTime(freq, t);
+                gain.gain.setValueAtTime(0.4, t);
+                gain.gain.exponentialRampToValueAtTime(0.01, t + 0.2);
+                osc.connect(gain).connect(dest);
+                osc.start(t);
+                osc.stop(t + 0.2);
+            });
+        });
+    }
+
     laserShoot(): void {
         this._play((ctx, dest) => {
             const osc = ctx.createOscillator();
@@ -334,6 +381,7 @@ const BrickType = {
     MULTI3: 'multi3',     // 3 hits to destroy
     INDESTRUCTIBLE: 'indestructible',
     EXPLOSIVE: 'explosive', // destroys adjacent bricks on break
+    BOSS: 'boss',         // large moving boss brick, many hits
 } as const;
 
 type BrickTypeValue = (typeof BrickType)[keyof typeof BrickType];
@@ -351,6 +399,9 @@ interface Brick {
     alive: boolean;
     type: BrickTypeValue;
     hitsLeft: number; // for multi-hit bricks
+    maxHits: number;  // total hits needed (for boss HP bar)
+    moveDir: number;  // boss brick horizontal movement direction (-1/0/1)
+    moveSpeed: number; // boss brick movement speed
 }
 
 // --- Level System ---
@@ -368,6 +419,9 @@ interface LevelConfig {
     rows: BrickRowConfig[];
     ballSpeed: number;
     paddleWidth: number;
+    isBoss?: boolean; // true for boss levels
+    bossHits?: number; // how many hits the boss brick takes
+    bossSpeed?: number; // boss brick movement speed
 }
 
 // Shorthand aliases for level patterns
@@ -376,6 +430,7 @@ const M2 = BrickType.MULTI2;
 const M3 = BrickType.MULTI3;
 const I = BrickType.INDESTRUCTIBLE;
 const E = BrickType.EXPLOSIVE;
+const B = BrickType.BOSS;
 const _ = false;
 
 const LEVELS: LevelConfig[] = [
@@ -442,21 +497,23 @@ const LEVELS: LevelConfig[] = [
         ballSpeed: 4.5,
         paddleWidth: 90,
     },
-    // Level 5 — Demolition: Explosive bricks for chain reactions
+    // Level 5 — BOSS: The Guardian — Moving boss brick with shield minions
     {
         level: 5,
-        name: 'Demolition',
+        name: '⚔ The Guardian',
         cols: 10,
+        isBoss: true,
+        bossHits: 15,
+        bossSpeed: 1.5,
         rows: [
-            { color: '#ff1744', points: 50, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
-            { color: '#ff9100', points: 40, pattern: [S,  _,  S,  E,  S,  S,  E,  S,  _,  S ] },
-            { color: '#ffea00', points: 30, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
-            { color: '#00e676', points: 25, pattern: [S,  E,  S,  _,  S,  S,  _,  S,  E,  S ] },
-            { color: '#2979ff', points: 20, pattern: [S,  S,  S,  S,  S,  S,  S,  S,  S,  S ] },
-            { color: '#e040fb', points: 15, pattern: [_,  _,  S,  E,  S,  S,  E,  S,  _,  _ ] },
+            { color: '#ff1744', points: 500, pattern: [_,  _,  _,  B,  B,  B,  B,  _,  _,  _ ] },
+            { color: '#ff9100', points: 30,  pattern: [_,  _,  I,  _,  _,  _,  _,  I,  _,  _ ] },
+            { color: '#ffea00', points: 25,  pattern: [_,  M2, S,  S,  S,  S,  S,  S,  M2, _ ] },
+            { color: '#00e676', points: 20,  pattern: [S,  S,  _,  S,  S,  S,  S,  _,  S,  S ] },
+            { color: '#2979ff', points: 15,  pattern: [S,  _,  S,  _,  E,  E,  _,  S,  _,  S ] },
         ],
         ballSpeed: 4.5,
-        paddleWidth: 90,
+        paddleWidth: 95,
     },
     // Level 6 — Iron Curtain: Heavy multi-hit layer protecting standard bricks
     {
@@ -508,6 +565,41 @@ const LEVELS: LevelConfig[] = [
         ],
         ballSpeed: 5.5,
         paddleWidth: 80,
+    },
+    // Level 9 — Demolition: Explosive chain reactions (moved from old Level 5 slot)
+    {
+        level: 9,
+        name: 'Demolition',
+        cols: 10,
+        rows: [
+            { color: '#ff1744', points: 60, pattern: [M2, S,  S,  S,  S,  S,  S,  S,  S,  M2] },
+            { color: '#ff9100', points: 50, pattern: [S,  _,  S,  E,  S,  S,  E,  S,  _,  S ] },
+            { color: '#ffea00', points: 40, pattern: [S,  S,  M2, S,  S,  S,  S,  M2, S,  S ] },
+            { color: '#00e676', points: 35, pattern: [S,  E,  S,  _,  M3, M3, _,  S,  E,  S ] },
+            { color: '#2979ff', points: 30, pattern: [M2, S,  S,  S,  S,  S,  S,  S,  S,  M2] },
+            { color: '#e040fb', points: 25, pattern: [_,  _,  S,  E,  S,  S,  E,  S,  _,  _ ] },
+        ],
+        ballSpeed: 5.5,
+        paddleWidth: 80,
+    },
+    // Level 10 — BOSS: The Destroyer — Fast boss with regenerating shields
+    {
+        level: 10,
+        name: '⚔ The Destroyer',
+        cols: 10,
+        isBoss: true,
+        bossHits: 25,
+        bossSpeed: 2.5,
+        rows: [
+            { color: '#ff1744', points: 1000, pattern: [_,  _,  B,  B,  B,  B,  B,  B,  _,  _ ] },
+            { color: '#ff9100', points: 40,   pattern: [_,  I,  M3, _,  _,  _,  _,  M3, I,  _ ] },
+            { color: '#ffea00', points: 35,   pattern: [I,  M2, S,  E,  S,  S,  E,  S,  M2, I ] },
+            { color: '#00e676', points: 30,   pattern: [S,  S,  S,  S,  M2, M2, S,  S,  S,  S ] },
+            { color: '#2979ff', points: 25,   pattern: [M2, _,  E,  S,  S,  S,  S,  E,  _,  M2] },
+            { color: '#e040fb', points: 20,   pattern: [S,  S,  _,  S,  E,  E,  S,  _,  S,  S ] },
+        ],
+        ballSpeed: 5.5,
+        paddleWidth: 85,
     },
 ];
 
@@ -621,6 +713,11 @@ class Game {
     comboMultiplier: number;
     comboDisplayTimer: number; // ms remaining to show combo popup
 
+    // Boss state
+    bossDefeated: boolean;
+    bossDefeatTimer: number; // ms remaining for boss defeat animation
+    bossFlashTimer: number; // ms remaining for boss hit flash
+
     // Level select
     levelProgress: LevelProgress[];
     selectedLevelIndex: number;
@@ -680,6 +777,11 @@ class Game {
         this.comboCount = 0;
         this.comboMultiplier = 1;
         this.comboDisplayTimer = 0;
+
+        // Boss state
+        this.bossDefeated = false;
+        this.bossDefeatTimer = 0;
+        this.bossFlashTimer = 0;
 
         // Level select
         this.levelProgress = loadLevelProgress();
@@ -887,11 +989,50 @@ class Game {
     createBricks(): void {
         const level = LEVELS[this.currentLevel]!;
         this.bricks = [];
+        this.bossDefeated = false;
+        this.bossDefeatTimer = 0;
+
+        // For boss levels, find boss cells and create a single wide boss brick
+        let bossCreated = false;
         for (let row = 0; row < level.rows.length; row++) {
             const rowConfig = level.rows[row]!;
+
+            // Detect contiguous boss cells in this row
+            if (level.isBoss && !bossCreated) {
+                let bossStart = -1;
+                let bossEnd = -1;
+                for (let col = 0; col < level.cols; col++) {
+                    if (rowConfig.pattern[col] === BrickType.BOSS) {
+                        if (bossStart === -1) bossStart = col;
+                        bossEnd = col;
+                    }
+                }
+                if (bossStart !== -1) {
+                    const bossCols = bossEnd - bossStart + 1;
+                    const bossWidth = bossCols * brickConfig.width + (bossCols - 1) * brickConfig.padding;
+                    const bossHits = level.bossHits ?? 15;
+                    this.bricks.push({
+                        x: brickConfig.offsetLeft + bossStart * (brickConfig.width + brickConfig.padding),
+                        y: brickConfig.offsetTop + row * (brickConfig.height + brickConfig.padding),
+                        width: bossWidth,
+                        height: brickConfig.height * 2 + brickConfig.padding,
+                        color: '#d50000',
+                        points: rowConfig.points,
+                        alive: true,
+                        type: BrickType.BOSS,
+                        hitsLeft: bossHits,
+                        maxHits: bossHits,
+                        moveDir: 1,
+                        moveSpeed: level.bossSpeed ?? 1.5,
+                    });
+                    bossCreated = true;
+                    continue; // skip adding individual bricks for boss row
+                }
+            }
+
             for (let col = 0; col < level.cols; col++) {
                 const cell = rowConfig.pattern[col];
-                if (!cell) continue;
+                if (!cell || cell === BrickType.BOSS) continue;
 
                 const brickType: BrickTypeValue = cell === true ? BrickType.STANDARD : cell;
                 let color = rowConfig.color;
@@ -921,6 +1062,9 @@ class Game {
                     alive: true,
                     type: brickType,
                     hitsLeft,
+                    maxHits: hitsLeft,
+                    moveDir: 0,
+                    moveSpeed: 0,
                 });
             }
         }
@@ -1261,21 +1405,45 @@ class Game {
             brick.alive = false;
             this._incrementCombo();
             this.score += brick.points * this.comboMultiplier;
-            soundManager.brickBreak(brick.type);
+
+            if (brick.type === BrickType.BOSS) {
+                // Boss defeated!
+                this.bossDefeated = true;
+                this.bossDefeatTimer = 2000; // 2 second celebration
+                soundManager.bossDefeat();
+            } else {
+                soundManager.brickBreak(brick.type);
+            }
+
             this._trySpawnPowerUp(brick);
 
             if (brick.type === BrickType.EXPLOSIVE) {
                 this._explodeNeighbors(brick);
             }
         } else {
-            // Multi-hit: darken color to show damage
-            soundManager.brickDamage();
-            if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 2) {
-                brick.color = '#ffb300'; // darker gold
-            } else if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 1) {
-                brick.color = '#ff8f00'; // even darker
-            } else if (brick.type === BrickType.MULTI2 && brick.hitsLeft === 1) {
-                brick.color = '#78909c'; // darker silver
+            if (brick.type === BrickType.BOSS) {
+                // Boss hit feedback: flash and sound
+                soundManager.bossHit();
+                this.bossFlashTimer = 100; // 100ms white flash
+                // Shift boss color from red toward darker as HP decreases
+                const hpRatio = brick.hitsLeft / brick.maxHits;
+                if (hpRatio > 0.6) {
+                    brick.color = '#d50000'; // full red
+                } else if (hpRatio > 0.3) {
+                    brick.color = '#b71c1c'; // dark red
+                } else {
+                    brick.color = '#880e0e'; // very dark red — nearly dead
+                }
+            } else {
+                // Multi-hit: darken color to show damage
+                soundManager.brickDamage();
+                if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 2) {
+                    brick.color = '#ffb300'; // darker gold
+                } else if (brick.type === BrickType.MULTI3 && brick.hitsLeft === 1) {
+                    brick.color = '#ff8f00'; // even darker
+                } else if (brick.type === BrickType.MULTI2 && brick.hitsLeft === 1) {
+                    brick.color = '#78909c'; // darker silver
+                }
             }
         }
     }
@@ -1372,6 +1540,24 @@ class Game {
 
             // Brick collisions
             this._processBallBrickCollisions(eb);
+        }
+    }
+
+    _updateBossBricks(dt: number): void {
+        for (const brick of this.bricks) {
+            if (!brick.alive || brick.type !== BrickType.BOSS) continue;
+
+            // Move boss brick horizontally
+            brick.x += brick.moveDir * brick.moveSpeed * dt;
+
+            // Bounce off canvas edges
+            if (brick.x <= 0) {
+                brick.x = 0;
+                brick.moveDir = 1;
+            } else if (brick.x + brick.width >= this.canvas.width) {
+                brick.x = this.canvas.width - brick.width;
+                brick.moveDir = -1;
+            }
         }
     }
 
@@ -1555,6 +1741,9 @@ class Game {
             }
         }
 
+        // Update boss brick movement
+        this._updateBossBricks(dt);
+
         // Brick collisions (primary ball)
         this._processBallBrickCollisions(ball);
 
@@ -1580,9 +1769,33 @@ class Game {
             }
         }
 
+        // Boss flash timer
+        if (this.bossFlashTimer > 0) {
+            this.bossFlashTimer -= dt * TARGET_DT;
+        }
+
+        // Boss defeat celebration timer — delay level advance
+        if (this.bossDefeated && this.bossDefeatTimer > 0) {
+            this.bossDefeatTimer -= dt * TARGET_DT;
+            if (this.bossDefeatTimer <= 0) {
+                this.bossDefeated = false;
+                // Check if all remaining bricks are cleared (or indestructible)
+                if (this.bricks.every((b) => !b.alive || b.type === BrickType.INDESTRUCTIBLE)) {
+                    this._advanceLevel();
+                }
+            }
+            return; // Pause gameplay during boss defeat animation
+        }
+
         // Level clear — advance or win
         if (this.bricks.every((b) => !b.alive || b.type === BrickType.INDESTRUCTIBLE)) {
-            this._advanceLevel();
+            // For boss levels, only advance if boss is already defeated (timer expired)
+            const level = LEVELS[this.currentLevel]!;
+            if (level.isBoss && !this.bossDefeated) {
+                // Boss was just killed — the bossDefeatTimer handles advancing
+            } else {
+                this._advanceLevel();
+            }
         }
     }
 
@@ -1679,6 +1892,67 @@ class Game {
         const { ctx } = this;
         for (const brick of this.bricks) {
             if (!brick.alive) continue;
+
+            if (brick.type === BrickType.BOSS) {
+                // Boss brick: pulsing glow + body
+                const hpRatio = brick.hitsLeft / brick.maxHits;
+                const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 200);
+
+                // Glow effect
+                ctx.shadowColor = hpRatio > 0.3 ? '#ff1744' : '#ff6d00';
+                ctx.shadowBlur = 8 + pulse * 8;
+
+                // Flash white on hit
+                if (this.bossFlashTimer > 0) {
+                    ctx.fillStyle = '#fff';
+                } else {
+                    ctx.fillStyle = brick.color;
+                }
+                ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
+                ctx.shadowBlur = 0;
+
+                // Boss border
+                ctx.strokeStyle = '#ff8a80';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(brick.x, brick.y, brick.width, brick.height);
+
+                // Skull icon centered on boss
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText('☠', brick.x + brick.width / 2, brick.y + brick.height / 2);
+
+                // HP bar above boss
+                const barWidth = brick.width;
+                const barHeight = 6;
+                const barX = brick.x;
+                const barY = brick.y - barHeight - 4;
+
+                // Background
+                ctx.fillStyle = '#333';
+                ctx.fillRect(barX, barY, barWidth, barHeight);
+
+                // HP fill
+                const hpColor = hpRatio > 0.6 ? '#4caf50' : hpRatio > 0.3 ? '#ff9800' : '#f44336';
+                ctx.fillStyle = hpColor;
+                ctx.fillRect(barX, barY, barWidth * hpRatio, barHeight);
+
+                // HP bar border
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                ctx.strokeRect(barX, barY, barWidth, barHeight);
+
+                // HP text
+                ctx.fillStyle = '#fff';
+                ctx.font = '10px monospace';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(`${brick.hitsLeft}/${brick.maxHits}`, barX + barWidth / 2, barY + barHeight / 2);
+
+                continue;
+            }
+
             ctx.fillStyle = brick.color;
             ctx.fillRect(brick.x, brick.y, brick.width, brick.height);
 
@@ -1787,6 +2061,37 @@ class Game {
             ctx.fillStyle = '#ff1744';
             ctx.font = '12px monospace';
             ctx.fillText('Space to Fire Lasers', canvas.width / 2, canvas.height - 12);
+        }
+
+        // Boss level indicator
+        const level = LEVELS[this.currentLevel]!;
+        if (level.isBoss && !this.bossDefeated) {
+            const pulse = 0.6 + 0.4 * Math.sin(Date.now() / 300);
+            ctx.globalAlpha = pulse;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#ff1744';
+            ctx.font = 'bold 16px monospace';
+            ctx.fillText(`⚔ BOSS BATTLE: ${level.name} ⚔`, canvas.width / 2, canvas.height - 15);
+            ctx.globalAlpha = 1;
+        }
+
+        // Boss defeat celebration overlay
+        if (this.bossDefeated && this.bossDefeatTimer > 0) {
+            const fade = Math.min(1, this.bossDefeatTimer / 500);
+            const scale = 1 + (1 - this.bossDefeatTimer / 2000) * 0.3;
+            ctx.globalAlpha = fade;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.font = `bold ${Math.floor(36 * scale)}px monospace`;
+            ctx.fillStyle = '#ffd740';
+            ctx.shadowColor = '#ff6d00';
+            ctx.shadowBlur = 20;
+            ctx.fillText('BOSS DEFEATED!', canvas.width / 2, canvas.height / 2 - 20);
+            ctx.font = `bold ${Math.floor(20 * scale)}px monospace`;
+            ctx.fillStyle = '#fff';
+            ctx.fillText(`${level.name} vanquished!`, canvas.width / 2, canvas.height / 2 + 20);
+            ctx.shadowBlur = 0;
+            ctx.globalAlpha = 1;
         }
     }
 
