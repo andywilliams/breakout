@@ -223,6 +223,7 @@ const soundManager = new SoundManager();
 // --- Game States ---
 const GameState = {
     MENU: 'menu',
+    LEVEL_SELECT: 'levelSelect',
     PLAYING: 'playing',
     PAUSED: 'paused',
     GAME_OVER: 'gameOver',
@@ -276,6 +277,46 @@ function addHighScore(initials: string, newScore: number): void {
     scores.sort((a, b) => b.score - a.score);
     if (scores.length > MAX_HIGH_SCORES) scores.length = MAX_HIGH_SCORES;
     saveHighScores(scores);
+}
+
+// --- Level Progress (localStorage) ---
+const LEVEL_PROGRESS_KEY = 'breakout_level_progress';
+
+interface LevelProgress {
+    unlocked: boolean;
+    completed: boolean;
+    highScore: number;
+    stars: number; // 0-3
+}
+
+function loadLevelProgress(): LevelProgress[] {
+    try {
+        const data = localStorage.getItem(LEVEL_PROGRESS_KEY);
+        if (data) return JSON.parse(data);
+    } catch { /* ignore */ }
+    return defaultLevelProgress();
+}
+
+function defaultLevelProgress(): LevelProgress[] {
+    return Array.from({ length: 8 }, (_, i) => ({
+        unlocked: i === 0,
+        completed: false,
+        highScore: 0,
+        stars: 0,
+    }));
+}
+
+function saveLevelProgress(progress: LevelProgress[]): void {
+    try {
+        localStorage.setItem(LEVEL_PROGRESS_KEY, JSON.stringify(progress));
+    } catch { /* localStorage may be unavailable */ }
+}
+
+/** Stars based on lives remaining when level is cleared */
+function calculateStars(livesRemaining: number): number {
+    if (livesRemaining >= 3) return 3;
+    if (livesRemaining >= 2) return 2;
+    return 1;
 }
 
 // --- Brick Config ---
@@ -580,13 +621,18 @@ class Game {
     comboMultiplier: number;
     comboDisplayTimer: number; // ms remaining to show combo popup
 
+    // Level select
+    levelProgress: LevelProgress[];
+    selectedLevelIndex: number;
+    playingFromLevelSelect: boolean; // true when started from level select
+
     lastTime: number;
     animFrameId: number | null;
 
     // Bound event handlers for cleanup
     private _onKeyDown: (e: KeyboardEvent) => void;
     private _onKeyUp: (e: KeyboardEvent) => void;
-    private _onClick: () => void;
+    private _onClick: (e: MouseEvent) => void;
     private _onMouseMove: (e: MouseEvent) => void;
     private _onTouchMove: (e: TouchEvent) => void;
     private _onTouchStart: (e: TouchEvent) => void;
@@ -635,6 +681,11 @@ class Game {
         this.comboMultiplier = 1;
         this.comboDisplayTimer = 0;
 
+        // Level select
+        this.levelProgress = loadLevelProgress();
+        this.selectedLevelIndex = 0;
+        this.playingFromLevelSelect = false;
+
         // Delta time tracking
         this.lastTime = 0;
         this.animFrameId = null;
@@ -642,8 +693,10 @@ class Game {
         // Initialize bound handlers
         this._onKeyDown = (e: KeyboardEvent) => this._handleKeyDown(e);
         this._onKeyUp = (e: KeyboardEvent) => { this.keys[e.key] = false; };
-        this._onClick = () => {
-            if (this.state === GameState.PLAYING && !this.ballLaunched) {
+        this._onClick = (e: MouseEvent) => {
+            if (this.state === GameState.LEVEL_SELECT) {
+                this._handleLevelSelectClick(e);
+            } else if (this.state === GameState.PLAYING && !this.ballLaunched) {
                 this.launchBall();
             } else if (this.state === GameState.PLAYING && this.stickyBallOffset !== null) {
                 this._releaseStickyBall();
@@ -715,19 +768,36 @@ class Game {
             } else if (this.state === GameState.PLAYING && this.activeEffect?.type === PowerUpType.LASER_PADDLE) {
                 this._fireLaser();
             } else if (this.state === GameState.MENU) {
-                this.startPlaying();
+                this.levelProgress = loadLevelProgress();
+                this.state = GameState.LEVEL_SELECT;
+            } else if (this.state === GameState.LEVEL_SELECT) {
+                this._selectLevel(this.selectedLevelIndex);
             } else if (this.state === GameState.GAME_OVER || this.state === GameState.WIN) {
                 if (this.score > 0 && isHighScore(this.score)) {
                     this.initialsBuffer = '';
                     this.highScoreJustEntered = false;
                     this.state = GameState.HIGH_SCORE_ENTRY;
                 } else {
-                    this.resetGame();
-                    this.startPlaying();
+                    this.state = GameState.LEVEL_SELECT;
                 }
             } else if (this.state === GameState.HIGH_SCORES) {
-                this.resetGame();
-                this.startPlaying();
+                this.state = GameState.LEVEL_SELECT;
+            }
+        }
+
+        // Level select arrow key navigation
+        if (this.state === GameState.LEVEL_SELECT) {
+            const cols = 4;
+            if (e.key === 'ArrowRight' || e.key === 'd') {
+                this.selectedLevelIndex = Math.min(LEVELS.length - 1, this.selectedLevelIndex + 1);
+            } else if (e.key === 'ArrowLeft' || e.key === 'a') {
+                this.selectedLevelIndex = Math.max(0, this.selectedLevelIndex - 1);
+            } else if (e.key === 'ArrowDown' || e.key === 's') {
+                if (this.selectedLevelIndex + cols < LEVELS.length) this.selectedLevelIndex += cols;
+            } else if (e.key === 'ArrowUp' || e.key === 'w') {
+                if (this.selectedLevelIndex - cols >= 0) this.selectedLevelIndex -= cols;
+            } else if (e.key === 'Enter') {
+                this._selectLevel(this.selectedLevelIndex);
             }
         }
 
@@ -747,6 +817,8 @@ class Game {
                 this.state = GameState.PAUSED;
             } else if (this.state === GameState.PAUSED) {
                 this.state = GameState.PLAYING;
+            } else if (this.state === GameState.LEVEL_SELECT) {
+                this.state = GameState.MENU;
             } else if (this.state === GameState.HIGH_SCORES) {
                 this.state = GameState.MENU;
             }
@@ -878,6 +950,25 @@ class Game {
     }
 
     _advanceLevel(): void {
+        // Save progress for the level just completed
+        const completedLevel = this.currentLevel;
+        const progress = this.levelProgress;
+        if (progress[completedLevel]) {
+            progress[completedLevel].completed = true;
+            const stars = calculateStars(this.lives);
+            if (stars > progress[completedLevel].stars) {
+                progress[completedLevel].stars = stars;
+            }
+            if (this.score > progress[completedLevel].highScore) {
+                progress[completedLevel].highScore = this.score;
+            }
+        }
+        // Unlock next level
+        if (completedLevel + 1 < LEVELS.length && progress[completedLevel + 1]) {
+            progress[completedLevel + 1]!.unlocked = true;
+        }
+        saveLevelProgress(progress);
+
         this.currentLevel++;
         this.powerUps = [];
         this.lasers = [];
@@ -893,6 +984,64 @@ class Game {
         this._applyLevelConfig();
         this.createBricks();
         this.initPositions();
+    }
+
+    _selectLevel(index: number): void {
+        const progress = this.levelProgress[index];
+        if (!progress || !progress.unlocked) return;
+        this.currentLevel = index;
+        this.score = 0;
+        this.lives = 3;
+        this.powerUps = [];
+        this.lasers = [];
+        this.extraBalls = [];
+        this.comboCount = 0;
+        this.comboMultiplier = 1;
+        this.comboDisplayTimer = 0;
+        if (this.activeEffect) this._expireEffect();
+        this.playingFromLevelSelect = true;
+        this._applyLevelConfig();
+        this.createBricks();
+        this.initPositions();
+        this.state = GameState.PLAYING;
+    }
+
+    _saveLevelHighScore(): void {
+        const progress = this.levelProgress;
+        const p = progress[this.currentLevel];
+        if (p && this.score > p.highScore) {
+            p.highScore = this.score;
+            saveLevelProgress(progress);
+        }
+    }
+
+    _handleLevelSelectClick(e: MouseEvent): void {
+        const rect = this.canvas.getBoundingClientRect();
+        const scaleX = this.canvas.width / rect.width;
+        const scaleY = this.canvas.height / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top) * scaleY;
+
+        const cols = 4;
+        const tileSize = 120;
+        const gap = 20;
+        const totalWidth = cols * tileSize + (cols - 1) * gap;
+        const rows = Math.ceil(LEVELS.length / cols);
+        const totalHeight = rows * tileSize + (rows - 1) * gap;
+        const startX = (this.canvas.width - totalWidth) / 2;
+        const startY = (this.canvas.height - totalHeight) / 2 + 30;
+
+        for (let i = 0; i < LEVELS.length; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const tx = startX + col * (tileSize + gap);
+            const ty = startY + row * (tileSize + gap);
+            if (mx >= tx && mx <= tx + tileSize && my >= ty && my <= ty + tileSize) {
+                this.selectedLevelIndex = i;
+                this._selectLevel(i);
+                return;
+            }
+        }
     }
 
     // --- Power-Up Methods ---
@@ -1396,6 +1545,7 @@ class Game {
                 this.stickyBallOffset = null;
                 if (this.lives <= 0) {
                     if (this.activeEffect) this._expireEffect();
+                    this._saveLevelHighScore();
                     this.state = GameState.GAME_OVER;
                     soundManager.gameOver();
                 } else {
@@ -1447,6 +1597,10 @@ class Game {
         switch (this.state) {
             case GameState.MENU:
                 this._drawStartScreen();
+                break;
+
+            case GameState.LEVEL_SELECT:
+                this._drawLevelSelectScreen();
                 break;
 
             case GameState.PLAYING:
@@ -1700,6 +1854,122 @@ class Game {
     }
 
     // --- Screen Rendering ---
+    _drawLevelSelectScreen(): void {
+        const { ctx, canvas } = this;
+
+        ctx.fillStyle = '#111';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.save();
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+
+        // Title
+        ctx.shadowColor = '#e040fb';
+        ctx.shadowBlur = 20;
+        ctx.fillStyle = '#e040fb';
+        ctx.font = 'bold 42px monospace';
+        ctx.fillText('SELECT LEVEL', canvas.width / 2, 45);
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#fff';
+        ctx.font = 'bold 42px monospace';
+        ctx.fillText('SELECT LEVEL', canvas.width / 2, 45);
+
+        // Grid layout
+        const cols = 4;
+        const tileSize = 120;
+        const gap = 20;
+        const totalWidth = cols * tileSize + (cols - 1) * gap;
+        const rows = Math.ceil(LEVELS.length / cols);
+        const totalHeight = rows * tileSize + (rows - 1) * gap;
+        const startX = (canvas.width - totalWidth) / 2;
+        const startY = (canvas.height - totalHeight) / 2 + 30;
+
+        for (let i = 0; i < LEVELS.length; i++) {
+            const col = i % cols;
+            const row = Math.floor(i / cols);
+            const tx = startX + col * (tileSize + gap);
+            const ty = startY + row * (tileSize + gap);
+            const progress = this.levelProgress[i];
+            const unlocked = progress?.unlocked ?? false;
+            const completed = progress?.completed ?? false;
+            const stars = progress?.stars ?? 0;
+            const highScore = progress?.highScore ?? 0;
+            const isSelected = i === this.selectedLevelIndex;
+            const level = LEVELS[i]!;
+
+            // Tile background
+            if (!unlocked) {
+                ctx.fillStyle = '#1a1a2e';
+                ctx.fillRect(tx, ty, tileSize, tileSize);
+                ctx.strokeStyle = '#333';
+                ctx.lineWidth = 2;
+                ctx.strokeRect(tx, ty, tileSize, tileSize);
+            } else {
+                // Gradient-like fill for unlocked tiles
+                ctx.fillStyle = completed ? '#1a2e1a' : '#1a1a3e';
+                ctx.fillRect(tx, ty, tileSize, tileSize);
+
+                // Selected highlight
+                if (isSelected) {
+                    ctx.shadowColor = '#00e5ff';
+                    ctx.shadowBlur = 15;
+                    ctx.strokeStyle = '#00e5ff';
+                    ctx.lineWidth = 3;
+                    ctx.strokeRect(tx, ty, tileSize, tileSize);
+                    ctx.shadowBlur = 0;
+                } else {
+                    ctx.strokeStyle = completed ? '#00e676' : '#555';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(tx, ty, tileSize, tileSize);
+                }
+            }
+
+            if (!unlocked) {
+                // Lock icon (simple padlock)
+                ctx.fillStyle = '#444';
+                ctx.font = '36px monospace';
+                ctx.fillText('\u{1F512}', tx + tileSize / 2, ty + tileSize / 2 - 5);
+                ctx.fillStyle = '#555';
+                ctx.font = '14px monospace';
+                ctx.fillText(`Level ${i + 1}`, tx + tileSize / 2, ty + tileSize - 15);
+            } else {
+                // Level number
+                ctx.fillStyle = isSelected ? '#00e5ff' : '#fff';
+                ctx.font = 'bold 28px monospace';
+                ctx.fillText(`${i + 1}`, tx + tileSize / 2, ty + 28);
+
+                // Level name
+                ctx.fillStyle = '#aaa';
+                ctx.font = '12px monospace';
+                ctx.fillText(level.name, tx + tileSize / 2, ty + 50);
+
+                // Stars
+                const starY = ty + 72;
+                for (let s = 0; s < 3; s++) {
+                    const sx = tx + tileSize / 2 - 20 + s * 20;
+                    ctx.fillStyle = s < stars ? '#ffea00' : '#333';
+                    ctx.font = '16px monospace';
+                    ctx.fillText('\u2605', sx, starY);
+                }
+
+                // High score
+                if (highScore > 0) {
+                    ctx.fillStyle = '#888';
+                    ctx.font = '11px monospace';
+                    ctx.fillText(`${highScore}`, tx + tileSize / 2, ty + tileSize - 12);
+                }
+            }
+        }
+
+        // Footer hints
+        ctx.fillStyle = '#555';
+        ctx.font = '14px monospace';
+        ctx.fillText('\u2190\u2191\u2192\u2193 Navigate  |  Space/Enter to Play  |  Esc to go back', canvas.width / 2, canvas.height - 25);
+
+        ctx.restore();
+    }
+
     _drawStartScreen(): void {
         const { ctx, canvas } = this;
 
