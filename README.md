@@ -34,7 +34,9 @@ Destroy all the bricks by bouncing the ball off your paddle. Don't let the ball 
 | `Escape` | Pause / Resume (during gameplay) |
 | `M` | Toggle sound effects on/off |
 | `H` | View high scores (from start screen) |
-| `Escape` | Return to start screen (from high scores) |
+| `←` / `→` / `↑` / `↓` | Navigate level select grid |
+| `Enter` or `Space` | Confirm level selection |
+| `Escape` | Return to previous screen |
 
 ### Gameplay
 
@@ -73,6 +75,28 @@ Destroying a brick has a **20% chance** to drop a power-up capsule. The capsule 
 - Only **one power-up can be active** at a time; catching a new one replaces the current effect
 - Power-ups are **cleared** when you lose a life, advance to the next level, or restart the game
 - If a capsule falls off the bottom of the screen without being caught, it despawns
+
+### Level Select
+
+Press `Space` on the title screen to open the level select grid — a 4×2 Mario-style tile layout where each tile represents one of the 8 levels.
+
+**How it works:**
+
+- **Level 1 is unlocked** by default; every other level must be earned by completing the one before it
+- Locked levels show a padlock icon and can't be selected
+- Unlocked levels display the level number, name, your **star rating** (0–3 stars), and **best score**
+- Navigate with arrow keys (or `WASD`) and confirm with `Enter`/`Space`, or simply click a tile
+- After a game over or win, you return to the level select screen (via high score entry if you qualify)
+
+**Star ratings** are awarded when you clear a level, based on lives remaining:
+
+| Lives Remaining | Stars |
+|-----------------|-------|
+| 3 | ★★★ |
+| 2 | ★★ |
+| 1 | ★ |
+
+Progress — unlocked levels, star ratings, and per-level high scores — is saved to `localStorage` under the key `breakout_level_progress` and persists across browser sessions.
 
 ### Levels
 
@@ -128,11 +152,12 @@ The game uses a state machine with the following states:
 
 | State | Description |
 |-------|-------------|
-| **Menu** | Title screen — press Space to play, H for high scores |
+| **Menu** | Title screen — press Space for level select, H for high scores |
+| **Level Select** | Pick a level from the 4×2 grid — unlocked levels only |
 | **Playing** | Active gameplay with ball, paddle, and bricks |
 | **Paused** | Gameplay frozen — press Escape to resume |
-| **Game Over** | All lives lost — enter high score or restart |
-| **Win** | All 8 levels cleared — enter high score or play again |
+| **Game Over** | All lives lost — enter high score or return to level select |
+| **Win** | All 8 levels cleared — enter high score or return to level select |
 | **High Score Entry** | Type 3-letter initials after a qualifying score |
 | **High Scores** | Leaderboard view |
 
