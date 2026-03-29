@@ -104,6 +104,7 @@ All sounds are generated in real-time using the **Web Audio API** — no audio f
 | **Laser shoot** | Sharp zap |
 | **Life lost** | Descending tone |
 | **Game over** | Low sustained drone |
+| **Combo milestone** | Rising arpeggio (pitch scales with multiplier) |
 | **Level clear** | Celebratory ascending arpeggio |
 
 Press **M** to toggle mute — the current state (`SFX ON` / `MUTED`) is shown in the top-right corner of the HUD.
@@ -113,6 +114,23 @@ Press **M** to toggle mute — the current state (`SFX ON` / `MUTED`) is shown i
 Points depend on which row a brick is in — higher rows are worth more. Point values increase in later levels to reward progression. For example, Level 1's top row awards 50 points per brick, while Level 8's top row awards 80.
 
 Multi-hit bricks award points only when fully destroyed. Indestructible bricks give no points. Explosive bricks award their own points plus trigger destruction (and scoring) of adjacent bricks.
+
+#### Combo System
+
+Hitting multiple bricks in a row *without the ball touching the paddle* builds a combo. The combo multiplier increases at these thresholds:
+
+| Consecutive Hits | Multiplier |
+|-------------------|------------|
+| 1–2 | 1x |
+| 3–5 | 2x |
+| 6–9 | 3x |
+| 10–14 | 4x |
+| 15+ | 5x |
+
+- The current combo count and multiplier appear on the HUD when active (2+ hits)
+- A milestone popup ("Nx COMBO!") displays briefly when the multiplier increases
+- The combo resets when the ball touches the paddle or a life is lost
+- In multi-ball mode, the combo continues across all active balls — it only resets when the last ball hits the paddle
 
 ### High Scores
 
