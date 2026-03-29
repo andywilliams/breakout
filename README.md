@@ -105,6 +105,7 @@ All sounds are generated in real-time using the **Web Audio API** — no audio f
 | **Life lost** | Descending tone |
 | **Game over** | Low sustained drone |
 | **Level clear** | Celebratory ascending arpeggio |
+| **Combo milestone** | Rising arpeggio (pitch scales with multiplier) |
 
 Press **M** to toggle mute — the current state (`SFX ON` / `MUTED`) is shown in the top-right corner of the HUD.
 
