@@ -718,6 +718,16 @@ class Game {
     bossDefeatTimer: number; // ms remaining for boss defeat animation
     bossFlashTimer: number; // ms remaining for boss hit flash
 
+    // Screen shake
+    shakeIntensity: number; // current shake magnitude in pixels
+    shakeDuration: number;  // ms remaining for shake
+    shakeOffsetX: number;   // current frame offset
+    shakeOffsetY: number;
+    screenShakeEnabled: boolean; // toggle for accessibility
+
+    // Combo flash effect
+    comboFlashTimer: number; // ms remaining for combo milestone flash
+
     // Level select
     levelProgress: LevelProgress[];
     selectedLevelIndex: number;
@@ -782,6 +792,16 @@ class Game {
         this.bossDefeated = false;
         this.bossDefeatTimer = 0;
         this.bossFlashTimer = 0;
+
+        // Screen shake
+        this.shakeIntensity = 0;
+        this.shakeDuration = 0;
+        this.shakeOffsetX = 0;
+        this.shakeOffsetY = 0;
+        this.screenShakeEnabled = true;
+
+        // Combo flash
+        this.comboFlashTimer = 0;
 
         // Level select
         this.levelProgress = loadLevelProgress();
@@ -912,6 +932,10 @@ class Game {
 
         if (e.key === 'm' || e.key === 'M') {
             soundManager.muted = !soundManager.muted;
+        }
+
+        if (e.key === 'v' || e.key === 'V') {
+            this.screenShakeEnabled = !this.screenShakeEnabled;
         }
 
         if (e.key === 'Escape') {
@@ -1389,12 +1413,26 @@ class Game {
         if (this.comboMultiplier > oldMultiplier) {
             soundManager.comboMilestone(this.comboMultiplier);
             this.comboDisplayTimer = 1500; // show milestone popup for 1.5s
+            this.comboFlashTimer = 300; // 300ms screen flash
+            // Shake on high combos (3x+), intensity scales with multiplier
+            if (this.comboMultiplier >= 3) {
+                this._triggerShake(2 + this.comboMultiplier, 150);
+            }
         }
     }
 
     _resetCombo(): void {
         this.comboCount = 0;
         this.comboMultiplier = 1;
+    }
+
+    _triggerShake(intensity: number, durationMs: number): void {
+        if (!this.screenShakeEnabled) return;
+        // Only override if new shake is stronger
+        if (intensity > this.shakeIntensity) {
+            this.shakeIntensity = intensity;
+            this.shakeDuration = durationMs;
+        }
     }
 
     _hitBrick(brick: Brick): void {
@@ -1411,6 +1449,7 @@ class Game {
                 this.bossDefeated = true;
                 this.bossDefeatTimer = 2000; // 2 second celebration
                 soundManager.bossDefeat();
+                this._triggerShake(10, 500); // big shake for boss defeat
             } else {
                 soundManager.brickBreak(brick.type);
             }
@@ -1418,7 +1457,12 @@ class Game {
             this._trySpawnPowerUp(brick);
 
             if (brick.type === BrickType.EXPLOSIVE) {
+                const countBefore = this.bricks.filter(b => !b.alive).length;
                 this._explodeNeighbors(brick);
+                const destroyed = this.bricks.filter(b => !b.alive).length - countBefore;
+                // Shake scales with explosion size: base 3px + 1px per destroyed brick, cap 10px
+                const intensity = Math.min(10, 3 + destroyed);
+                this._triggerShake(intensity, 200 + destroyed * 30);
             }
         } else {
             if (brick.type === BrickType.BOSS) {
@@ -1774,6 +1818,25 @@ class Game {
             this.bossFlashTimer -= dt * TARGET_DT;
         }
 
+        // Screen shake timer
+        if (this.shakeDuration > 0) {
+            this.shakeDuration -= dt * TARGET_DT;
+            const progress = Math.max(0, this.shakeDuration / 300); // decay factor
+            const magnitude = this.shakeIntensity * progress;
+            this.shakeOffsetX = (Math.random() * 2 - 1) * magnitude;
+            this.shakeOffsetY = (Math.random() * 2 - 1) * magnitude;
+            if (this.shakeDuration <= 0) {
+                this.shakeIntensity = 0;
+                this.shakeOffsetX = 0;
+                this.shakeOffsetY = 0;
+            }
+        }
+
+        // Combo flash timer
+        if (this.comboFlashTimer > 0) {
+            this.comboFlashTimer -= dt * TARGET_DT;
+        }
+
         // Boss defeat celebration timer — delay level advance
         if (this.bossDefeated && this.bossDefeatTimer > 0) {
             this.bossDefeatTimer -= dt * TARGET_DT;
@@ -1817,21 +1880,42 @@ class Game {
                 break;
 
             case GameState.PLAYING:
+                ctx.save();
+                if (this.shakeDuration > 0) {
+                    ctx.translate(this.shakeOffsetX, this.shakeOffsetY);
+                }
                 this._drawBricks();
                 this._drawPowerUps();
                 this._drawLasers();
                 this._drawPaddle();
                 this._drawBall();
+                ctx.restore();
+                // Combo flash overlay (drawn without shake offset)
+                if (this.comboFlashTimer > 0) {
+                    const flashAlpha = 0.15 * (this.comboFlashTimer / 300);
+                    const flashColor = this.comboMultiplier >= 4 ? '#ff1744' :
+                                       this.comboMultiplier >= 3 ? '#ff9100' :
+                                       '#ffea00';
+                    ctx.fillStyle = flashColor;
+                    ctx.globalAlpha = flashAlpha;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.globalAlpha = 1;
+                }
                 this._drawHUD();
                 this._drawActiveEffect();
                 break;
 
             case GameState.PAUSED:
+                ctx.save();
+                if (this.shakeDuration > 0) {
+                    ctx.translate(this.shakeOffsetX, this.shakeOffsetY);
+                }
                 this._drawBricks();
                 this._drawPowerUps();
                 this._drawLasers();
                 this._drawPaddle();
                 this._drawBall();
+                ctx.restore();
                 this._drawHUD();
                 this._drawActiveEffect();
                 this._drawPauseOverlay();
@@ -2019,16 +2103,27 @@ class Game {
             ctx.fillText(`Combo: ${this.comboCount} (${this.comboMultiplier}x)`, 15, 50);
         }
 
-        // Combo milestone popup (centered, fades out)
+        // Combo milestone popup (centered, fades out) with glow
         if (this.comboDisplayTimer > 0 && this.comboMultiplier > 1) {
             const fade = Math.min(1, this.comboDisplayTimer / 500);
             const yOffset = (1 - fade) * 10;
+            const comboColor = this.comboMultiplier >= 4 ? '#ff1744' :
+                               this.comboMultiplier >= 3 ? '#ff9100' :
+                               '#ffea00';
+            // Scale text based on multiplier for extra impact
+            const fontSize = 28 + (this.comboMultiplier - 2) * 4;
+            const pulse = 0.7 + 0.3 * Math.sin(Date.now() / 100);
             ctx.globalAlpha = fade;
-            ctx.font = 'bold 28px monospace';
+            // Glow layer
+            ctx.shadowColor = comboColor;
+            ctx.shadowBlur = 12 + pulse * 8;
+            ctx.font = `bold ${fontSize}px monospace`;
             ctx.textAlign = 'center';
-            ctx.fillStyle = this.comboMultiplier >= 4 ? '#ff1744' :
-                            this.comboMultiplier >= 3 ? '#ff9100' :
-                            '#ffea00';
+            ctx.fillStyle = comboColor;
+            ctx.fillText(`${this.comboMultiplier}x COMBO!`, canvas.width / 2, 90 - yOffset);
+            ctx.shadowBlur = 0;
+            // Solid layer on top
+            ctx.fillStyle = '#fff';
             ctx.fillText(`${this.comboMultiplier}x COMBO!`, canvas.width / 2, 90 - yOffset);
             ctx.globalAlpha = 1;
         }
@@ -2038,6 +2133,9 @@ class Game {
         ctx.font = '12px monospace';
         ctx.textAlign = 'right';
         ctx.fillText(soundManager.muted ? 'MUTED [M]' : 'SFX ON [M]', canvas.width - 15, 48);
+        // Shake indicator
+        ctx.fillStyle = this.screenShakeEnabled ? '#aaa' : '#555';
+        ctx.fillText(this.screenShakeEnabled ? 'SHAKE ON [V]' : 'SHAKE OFF [V]', canvas.width - 15, 63);
 
         // Launch hint
         if (!this.ballLaunched && Math.floor(Date.now() / 600) % 2 === 0) {
